@@ -1,0 +1,12 @@
+{
+  "name": "image-upscaler",
+  "version": "1.0.0",
+  "description": "Enterprise GMC Product Image Super-Resolution Platform",
+  "license": "Apache-2.0",
+  "private": true,
+  "scripts": {
+    "test": "node --test tests/frontend.test.js",
+    "lint": "gts lint",
+    "fix": "gts fix"
+  }
+}

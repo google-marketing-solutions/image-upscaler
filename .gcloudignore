@@ -1,0 +1,14 @@
+.git
+.gitignore
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+output/
+local_gcs_bucket/
+tests/local_gcs_bucket/
+node_modules/
+.terraform/
+*.tfstate
+*.tfstate.*

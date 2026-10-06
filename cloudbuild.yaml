@@ -1,0 +1,70 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Cloud Build CI/CD Configuration for ImageUpscaler
+# Builds image, pushes to Artifact Registry, and deploys Cloud Run Service.
+
+substitutions:
+  _REGION: "asia-northeast1"
+  _AR_REPO: "image-upscaler-repo"
+  _SERVICE_NAME: "gmc-image-upscaler"
+  _JOB_NAME: "gmc-image-upscaler-job"
+  _PUBLIC_GCS_BUCKET: "${PROJECT_ID}-gmc-upscaled-public"
+  _DOCKERFILE: "Dockerfile"
+
+steps:
+  - name: "gcr.io/cloud-builders/docker"
+    id: "build-image"
+    entrypoint: "bash"
+    args:
+      - "-c"
+      - |
+        REPO_URI="${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}"
+        IMG="${REPO_URI}/${_SERVICE_NAME}"
+        docker build -f "${_DOCKERFILE}" \
+          -t "${IMG}:${SHORT_SHA}" \
+          -t "${IMG}:latest" .
+
+  - name: "gcr.io/cloud-builders/docker"
+    id: "push-image"
+    entrypoint: "bash"
+    args:
+      - "-c"
+      - |
+        REPO_URI="${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}"
+        docker push --all-tags "${REPO_URI}/${_SERVICE_NAME}"
+
+  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
+    id: "deploy-cloud-run-service"
+    entrypoint: "bash"
+    args:
+      - "-c"
+      - |
+        REPO_URI="${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}"
+        IMG="${REPO_URI}/${_SERVICE_NAME}:${SHORT_SHA}"
+        ENV_VARS="GCP_PROJECT_ID=${PROJECT_ID},VERTEX_LOCATION=global"
+        ENV_VARS="${ENV_VARS},PUBLIC_GCS_BUCKET=${_PUBLIC_GCS_BUCKET}"
+        ENV_VARS="${ENV_VARS},USE_MOCK_GCS=false"
+        gcloud run deploy "${_SERVICE_NAME}" \
+          --image="${IMG}" \
+          --region="${_REGION}" \
+          --platform=managed \
+          --cpu=2 \
+          --memory=2Gi \
+          --min-instances=0 \
+          --max-instances=20 \
+          --set-env-vars="${ENV_VARS}"
+
+options:
+  logging: CLOUD_LOGGING_ONLY

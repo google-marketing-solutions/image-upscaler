@@ -1,0 +1,1233 @@
+<!--
+ Copyright 2026 Google LLC
+
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+-->
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ImageUpscaler</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <!-- Google 4-Color Top Accent & Animated Progress Bar -->
+  <div id="top-progress-bar" class="top-progress-bar">
+    <div class="google-bar-segment seg-blue"></div>
+    <div class="google-bar-segment seg-red"></div>
+    <div class="google-bar-segment seg-yellow"></div>
+    <div class="google-bar-segment seg-green"></div>
+  </div>
+
+  <!-- Minimal Google-Style Navbar (Brand + Nav Links + Language Switcher) -->
+  <header class="app-navbar">
+    <div class="navbar-inner">
+      <div class="navbar-left">
+        <a
+          href="/"
+          id="nav-brand-link"
+          class="brand-lockup"
+          aria-label="ImageUpscaler Home"
+        >
+          <span class="brand-icon" aria-hidden="true">
+            <span class="dot dot-blue"></span>
+            <span class="dot dot-red"></span>
+            <span class="dot dot-yellow"></span>
+            <span class="dot dot-green"></span>
+          </span>
+          <span class="brand-title">ImageUpscaler</span>
+        </a>
+
+        <nav
+          id="nav-tabs"
+          class="nav-tabs hidden"
+          aria-label="Primary Navigation"
+        >
+          <a
+            href="/"
+            id="nav-tab-requests"
+            class="nav-tab active"
+            data-i18n="nav_requests"
+          >リクエスト一覧</a>
+          <a
+            href="/billing"
+            id="nav-tab-billing"
+            class="nav-tab"
+            data-i18n="nav_billing"
+          >請求・コスト見積もり</a>
+        </nav>
+      </div>
+
+      <div class="navbar-actions">
+        <!-- APAC Language Dropdown -->
+        <div class="lang-switcher-bar">
+          <label for="select-language" class="sr-only">Language</label>
+          <select
+            id="select-language"
+            class="lang-select"
+            aria-label="Select Language"
+          >
+            <option value="ja" selected>🇯🇵 日本語 (Default)</option>
+            <option value="en">🇺🇸 English</option>
+            <option value="zh-CN">🇨🇳 简体中文 (Chinese Simplified)</option>
+            <option value="zh-TW">🇹🇼 繁體中文 (Chinese Traditional)</option>
+            <option value="ko">🇰🇷 한국어 (Korean)</option>
+            <option value="vi">🇻🇳 Tiếng Việt (Vietnamese)</option>
+            <option value="th">🇹🇭 ไทย (Thai)</option>
+            <option value="id">🇮🇩 Bahasa Indonesia</option>
+            <option value="hi">🇮🇳 हिन्दी (Hindi)</option>
+          </select>
+        </div>
+
+        <button
+          type="button"
+          id="btn-logout"
+          class="btn btn-google-text hidden"
+          data-i18n="btn_sign_out"
+        >
+          ログアウト
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main class="page-container">
+    <!-- Toast / Status Notification Banner -->
+    <section
+      id="status-banner"
+      class="toast-banner hidden"
+      role="status"
+      aria-live="polite"
+    ></section>
+
+    <!-- 1. Google-Style Access Code Sign-In Screen -->
+    <section id="view-auth" class="view-screen auth-screen">
+      <div class="google-auth-card">
+        <div class="auth-logo-dots" aria-hidden="true">
+          <span class="dot dot-blue"></span>
+          <span class="dot dot-red"></span>
+          <span class="dot dot-yellow"></span>
+          <span class="dot dot-green"></span>
+        </div>
+        <h1 class="auth-heading" data-i18n="auth_title">ログイン</h1>
+        <p class="auth-subheading" data-i18n="auth_subtitle">
+          デプロイ時のアクセスコードを入力して ImageUpscaler を開きます
+        </p>
+
+        <div class="field-group">
+          <label
+            for="input-access-code"
+            class="field-label"
+            data-i18n="auth_label"
+          >アクセスコード</label>
+          <input
+            type="password"
+            id="input-access-code"
+            class="google-input"
+            placeholder="Access Code"
+            autocomplete="current-password"
+          />
+        </div>
+
+        <div class="auth-actions">
+          <button
+            type="button"
+            id="btn-login"
+            class="btn btn-google-primary btn-full"
+            data-i18n="btn_unlock"
+          >
+            ロック解除
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- 2. Authenticated Application Views -->
+    <div id="authenticated-shell" class="hidden">
+      <!-- VIEW A: Dashboard (All Requests List) -->
+      <section id="view-dashboard" class="view-screen">
+        <div class="page-header-row">
+          <div>
+            <h1 class="page-title" data-i18n="dash_title">
+              画像高画質化リクエスト
+            </h1>
+            <p class="page-subtitle" data-i18n="dash_subtitle">
+              CSVをアップロードし、バックグラウンド並列処理で画像を一括変換します。
+            </p>
+          </div>
+          <div class="header-btn-group">
+            <button
+              type="button"
+              id="btn-download-daily-log"
+              class="btn btn-google-outlined"
+              data-i18n="btn_daily_log"
+            >
+              日次ログ (CSV) をダウンロード
+            </button>
+            <button
+              type="button"
+              id="btn-refresh-requests"
+              class="btn btn-google-outlined"
+              data-i18n="btn_refresh"
+            >
+              更新
+            </button>
+            <button
+              type="button"
+              id="btn-hero-new-request"
+              class="btn btn-google-primary"
+              data-i18n="btn_raise_request"
+            >
+              + 新規リクエスト作成
+            </button>
+          </div>
+        </div>
+
+        <!-- Overview KPI Strip -->
+        <div class="kpi-strip">
+          <div class="kpi-card">
+            <span class="kpi-label" data-i18n="kpi_total_requests">
+              総リクエスト数
+            </span>
+            <strong id="kpi-total-requests" class="kpi-value">0</strong>
+          </div>
+          <div class="kpi-card">
+            <span class="kpi-label" data-i18n="kpi_images_upscaled">
+              変換済み画像数
+            </span>
+            <strong
+              id="kpi-upscaled-images"
+              class="kpi-value kpi-green"
+            >0</strong>
+          </div>
+          <div class="kpi-card">
+            <span class="kpi-label" data-i18n="kpi_skipped_compliant">
+              スキップ (基準適合済)
+            </span>
+            <strong
+              id="kpi-skipped-images"
+              class="kpi-value kpi-blue"
+            >0</strong>
+          </div>
+          <div class="kpi-card">
+            <span class="kpi-label" data-i18n="kpi_est_spend">
+              累計推定コスト
+            </span>
+            <strong id="kpi-total-spend" class="kpi-value">$0.0000</strong>
+          </div>
+        </div>
+
+        <!-- Requests Table Card -->
+        <div class="google-card">
+          <div class="table-responsive">
+            <table class="google-table">
+              <thead>
+                <tr>
+                  <th data-i18n="th_req_id">リクエストID</th>
+                  <th data-i18n="th_file">CSVファイル</th>
+                  <th data-i18n="th_engine">エンジン</th>
+                  <th data-i18n="th_resolution">解像度</th>
+                  <th data-i18n="th_status">ステータス</th>
+                  <th data-i18n="th_progress">画像数</th>
+                  <th data-i18n="th_cost">推定コスト</th>
+                  <th data-i18n="th_created">作成日時 (UTC)</th>
+                  <th class="text-right" data-i18n="th_actions">操作</th>
+                </tr>
+              </thead>
+              <tbody id="requests-table-tbody"></tbody>
+            </table>
+          </div>
+          <div id="requests-pagination-bar" class="pagination-bar">
+            <div class="pagination-info" id="requests-page-info">
+              Showing 0–0 of 0
+            </div>
+            <div class="pagination-controls">
+              <label
+                for="requests-page-size"
+                class="pagination-label"
+                data-i18n="lbl_rows_per_page"
+              >表示件数:</label>
+              <select id="requests-page-size" class="pagination-select">
+                <option value="10">10</option>
+                <option value="20" selected>20</option>
+                <option value="50">50</option>
+                <option value="100">100</option>
+              </select>
+              <div
+                id="requests-page-buttons"
+                class="pagination-btn-group"
+              ></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- VIEW B: Multi-Screen Animated Wizard (Raise New Request) -->
+      <section id="view-wizard" class="view-screen hidden">
+        <div class="wizard-container">
+          <div class="wizard-top-bar">
+            <button
+              type="button"
+              id="btn-wizard-cancel"
+              class="btn btn-google-text"
+              data-i18n="btn_back_requests"
+            >
+              ← リクエスト一覧へ戻る
+            </button>
+            <span class="wizard-step-counter" id="wizard-step-label">
+              Step 1 / 3
+            </span>
+          </div>
+
+          <!-- Google Material Stepper Header -->
+          <div class="stepper-header">
+            <div class="step-item active" id="stepper-node-1">
+              <span class="step-circle">1</span>
+              <span class="step-title" data-i18n="step_1_title">CSV選択</span>
+            </div>
+            <div class="step-connector" id="stepper-line-1"></div>
+            <div class="step-item" id="stepper-node-2">
+              <span class="step-circle">2</span>
+              <span class="step-title" data-i18n="step_2_title">
+                エンジン選択
+              </span>
+            </div>
+            <div class="step-connector" id="stepper-line-2"></div>
+            <div class="step-item" id="stepper-node-3">
+              <span class="step-circle">3</span>
+              <span class="step-title" data-i18n="step_3_title">
+                確認・送信
+              </span>
+            </div>
+          </div>
+
+          <!-- STEP 1 SCREEN: Upload CSV -->
+          <div id="wizard-step-1" class="wizard-step-panel">
+            <h2 class="wizard-title" data-i18n="wiz_s1_heading">
+              画像URLを含むCSVをアップロード
+            </h2>
+            <p class="wizard-subtitle" data-i18n="wiz_s1_sub">
+              id,image_link または画像URL列を含むCSVファイルを選択してください。
+            </p>
+
+            <label
+              for="file-upload"
+              id="dropzone-area"
+              class="upload-dropzone"
+            >
+              <span class="dropzone-icon" aria-hidden="true">↑</span>
+              <span
+                class="dropzone-heading"
+                id="dropzone-title"
+                data-i18n="dropzone_default_title"
+              >クリックしてCSVファイルを選択</span>
+              <span
+                class="dropzone-hint"
+                id="dropzone-subtitle"
+                data-i18n="dropzone_default_sub"
+              >.csv / .tsv / .txt (最大 10 MB)</span>
+              <input
+                type="file"
+                id="file-upload"
+                accept=".csv,.tsv,.txt"
+                class="sr-only"
+              />
+            </label>
+
+            <div class="sample-helper-row">
+              <button
+                type="button"
+                id="btn-download-sample"
+                class="btn btn-google-text"
+                data-i18n="btn_download_template"
+              >
+                サンプルCSVテンプレートをダウンロード
+              </button>
+            </div>
+
+            <div class="wizard-footer">
+              <div></div>
+              <button
+                type="button"
+                id="btn-step1-next"
+                class="btn btn-google-primary"
+                data-i18n="btn_continue"
+                disabled
+              >
+                次へ →
+              </button>
+            </div>
+          </div>
+
+          <!-- STEP 2 SCREEN: Select Engine & Resolution -->
+          <div id="wizard-step-2" class="wizard-step-panel hidden">
+            <h2 class="wizard-title" data-i18n="wiz_s2_heading">
+              エンジンと目標解像度の選択
+            </h2>
+            <p class="wizard-subtitle" data-i18n="wiz_s2_sub">
+              CSVに対する推定コストを比較し、最適なエンジンを選択してください。
+            </p>
+
+            <h3 class="section-label" data-i18n="wiz_select_res">
+              1. 目標解像度
+            </h3>
+            <div
+              class="resolution-pills-grid"
+              id="resolution-cards-container"
+            >
+              <div
+                class="choice-card selected"
+                data-res="1500"
+                tabindex="0"
+                role="button"
+              >
+                <div class="choice-card-top">
+                  <strong class="choice-title">1500 × 1500 px</strong>
+                  <span
+                    class="chip chip-blue"
+                    data-i18n="badge_recommended"
+                  >推奨</span>
+                </div>
+                <p class="choice-desc" data-i18n="res_1500_desc">
+                  Google Merchant Center 推奨の高解像度ズーム対応サイズ。
+                </p>
+              </div>
+
+              <div
+                class="choice-card"
+                data-res="500"
+                tabindex="0"
+                role="button"
+              >
+                <div class="choice-card-top">
+                  <strong class="choice-title">500 × 500 px</strong>
+                  <span
+                    class="chip chip-neutral"
+                    data-i18n="badge_minimum"
+                  >最小基準</span>
+                </div>
+                <p class="choice-desc" data-i18n="res_500_desc">
+                  500×500 px の最低要件を最速・最小コストで満たします。
+                </p>
+              </div>
+            </div>
+
+            <h3 class="section-label" data-i18n="wiz_select_engine">
+              2. エンジンの選択 (このCSVの推定コスト)
+            </h3>
+            <div class="engine-cards-grid" id="engine-cards-container">
+              <div
+                class="choice-card selected"
+                data-engine="local-lanczos-canvas"
+                tabindex="0"
+                role="button"
+              >
+                <div class="choice-card-top">
+                  <strong class="choice-title">Local Smart Lanczos</strong>
+                  <span
+                    class="chip chip-green"
+                    id="wiz-cost-local-lanczos-canvas"
+                  >Best Value</span>
+                </div>
+                <p class="choice-desc" data-i18n="eng_lc_desc">
+                  ハルシネーション0%。文字・ロゴ・型番を含む商品画像に最適。
+                </p>
+              </div>
+
+              <div
+                class="choice-card"
+                data-engine="realesrgan"
+                tabindex="0"
+                role="button"
+              >
+                <div class="choice-card-top">
+                  <strong class="choice-title">Real-ESRGAN (GPU)</strong>
+                  <span
+                    class="chip chip-blue"
+                    id="wiz-cost-realesrgan"
+                  >GPU</span>
+                </div>
+                <p class="choice-desc" data-i18n="eng_esr_desc">
+                  輪郭をシャープに補正する高速GPU超解像パイプライン。
+                </p>
+              </div>
+
+              <div
+                class="choice-card"
+                data-engine="gemini-3.1-flash-lite-image"
+                tabindex="0"
+                role="button"
+              >
+                <div class="choice-card-top">
+                  <strong class="choice-title">Gemini 3.1 Flash Lite</strong>
+                  <span
+                    class="chip chip-amber"
+                    id="wiz-cost-gemini-3.1-flash-lite-image"
+                  >Vertex AI</span>
+                </div>
+                <p class="choice-desc" data-i18n="eng_gfl_desc">
+                  文字なしのアパレル・雑貨向けの低コスト生成AI高画質化。
+                </p>
+              </div>
+
+              <div
+                class="choice-card"
+                data-engine="gemini-3.1-flash-image"
+                tabindex="0"
+                role="button"
+              >
+                <div class="choice-card-top">
+                  <strong class="choice-title">Gemini 3.1 Flash</strong>
+                  <span
+                    class="chip chip-amber"
+                    id="wiz-cost-gemini-3.1-flash-image"
+                  >Vertex AI</span>
+                </div>
+                <p class="choice-desc" data-i18n="eng_gf_desc">
+                  1500×1500 px 向けに質感とディテールを高精度に補完。
+                </p>
+              </div>
+
+              <div
+                class="choice-card"
+                data-engine="gemini-3-pro-image"
+                tabindex="0"
+                role="button"
+              >
+                <div class="choice-card-top">
+                  <strong class="choice-title">Gemini 3 Pro Image</strong>
+                  <span
+                    class="chip chip-amber"
+                    id="wiz-cost-gemini-3-pro-image"
+                  >Vertex AI Pro</span>
+                </div>
+                <p class="choice-desc" data-i18n="eng_gp_desc">
+                  主力商品（ヒーローSKU）向けの最高品質・高精度生成AI。
+                </p>
+              </div>
+            </div>
+
+            <div class="wizard-footer">
+              <button
+                type="button"
+                id="btn-step2-back"
+                class="btn btn-google-outlined"
+                data-i18n="btn_back"
+              >
+                ← 戻る
+              </button>
+              <button
+                type="button"
+                id="btn-step2-next"
+                class="btn btn-google-primary"
+                data-i18n="btn_continue"
+              >
+                次へ →
+              </button>
+            </div>
+          </div>
+
+          <!-- STEP 3 SCREEN: Review & Instant Parallel Submit -->
+          <div id="wizard-step-3" class="wizard-step-panel hidden">
+            <h2 class="wizard-title" data-i18n="wiz_s3_heading">
+              内容確認・バックグラウンド実行
+            </h2>
+            <p class="wizard-subtitle" data-i18n="wiz_s3_sub">
+              送信すると即座にジョブ登録され、画面をブロックせずに並列処理されます。
+            </p>
+
+            <div class="review-summary-box">
+              <div class="review-row">
+                <span class="review-key" data-i18n="rev_file">
+                  CSVファイル名
+                </span>
+                <strong class="review-val" id="review-filename">—</strong>
+              </div>
+              <div class="review-row">
+                <span class="review-key" data-i18n="rev_rows">
+                  検出された画像行数
+                </span>
+                <strong class="review-val" id="review-row-count">—</strong>
+              </div>
+              <div class="review-row">
+                <span class="review-key" data-i18n="rev_engine">
+                  選択エンジン
+                </span>
+                <strong class="review-val" id="review-engine">—</strong>
+              </div>
+              <div class="review-row">
+                <span class="review-key" data-i18n="rev_res">目標解像度</span>
+                <strong class="review-val" id="review-resolution">—</strong>
+              </div>
+              <div class="review-row">
+                <span class="review-key" data-i18n="rev_cost">推定コスト</span>
+                <strong
+                  class="review-val kpi-green"
+                  id="review-cost"
+                >$0.0000</strong>
+              </div>
+            </div>
+
+            <div class="wizard-footer">
+              <button
+                type="button"
+                id="btn-step3-back"
+                class="btn btn-google-outlined"
+                data-i18n="btn_back"
+              >
+                ← 戻る
+              </button>
+              <button
+                type="button"
+                id="btn-submit-request"
+                class="btn btn-google-primary"
+                data-i18n="btn_submit_job"
+              >
+                リクエストを送信
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- VIEW C: Dedicated Request Detail Screen (/request/<request-id>) -->
+      <section id="view-request-detail" class="view-screen hidden">
+        <div class="detail-top-nav">
+          <button
+            type="button"
+            id="btn-detail-back"
+            class="btn btn-google-text"
+            data-i18n="btn_back_requests"
+          >
+            ← リクエスト一覧へ戻る
+          </button>
+          <span class="detail-url-pill" id="detail-route-badge">
+            /request/...
+          </span>
+        </div>
+
+        <div class="page-header-row">
+          <div class="detail-title-group">
+            <h1 class="page-title" id="detail-request-id">job-...</h1>
+            <span id="detail-status-chip" class="chip">PROCESSING</span>
+          </div>
+          <div class="header-btn-group">
+            <button
+              type="button"
+              id="btn-detail-refresh"
+              class="btn btn-google-outlined"
+              data-i18n="btn_refresh"
+            >
+              更新
+            </button>
+            <button
+              type="button"
+              id="btn-detail-download-input"
+              class="btn btn-google-outlined"
+              data-i18n="btn_dl_input"
+            >
+              入力CSVをダウンロード
+            </button>
+            <button
+              type="button"
+              id="btn-detail-download-output"
+              class="btn btn-google-primary"
+              data-i18n="btn_dl_output"
+            >
+              出力CSVをダウンロード
+            </button>
+          </div>
+        </div>
+
+        <div id="detail-error-alert" class="detail-alert-error hidden"></div>
+
+        <!-- Live Parallel Progress Bar Card -->
+        <div id="detail-live-progress-card" class="live-progress-card hidden">
+          <div class="live-progress-header">
+            <div class="live-progress-title-wrap">
+              <span class="live-pulse-dot" id="detail-live-pulse"></span>
+              <strong
+                id="detail-progress-label"
+                class="live-progress-title"
+              >並列処理の進捗状況</strong>
+            </div>
+            <div class="live-progress-meta-right">
+              <span id="detail-progress-eta" class="live-progress-eta"></span>
+              <span id="detail-progress-stats" class="live-progress-stats">
+                0 / 0 SKUs (0%)
+              </span>
+            </div>
+          </div>
+          <div
+            class="live-progress-track"
+            role="progressbar"
+            aria-valuemin="0"
+            aria-valuemax="100"
+            aria-valuenow="0"
+            id="detail-progress-track"
+          >
+            <div
+              id="detail-progress-fill"
+              class="live-progress-fill"
+              style="width: 0%"
+            ></div>
+          </div>
+        </div>
+
+        <!-- Request KPI Strip -->
+        <div class="kpi-strip kpi-strip-5">
+          <div class="kpi-card">
+            <span class="kpi-label" data-i18n="kpi_engine_only">エンジン</span>
+            <strong
+              id="detail-kpi-engine"
+              class="kpi-value kpi-small"
+            >—</strong>
+          </div>
+          <div class="kpi-card">
+            <span class="kpi-label" data-i18n="kpi_images_upscaled">
+              変換済み画像数
+            </span>
+            <strong
+              id="detail-kpi-upscaled"
+              class="kpi-value kpi-green"
+            >0</strong>
+          </div>
+          <div class="kpi-card">
+            <span class="kpi-label" data-i18n="kpi_skipped_compliant">
+              スキップ (基準適合済)
+            </span>
+            <strong
+              id="detail-kpi-skipped"
+              class="kpi-value kpi-blue"
+            >0</strong>
+          </div>
+          <div
+            class="kpi-card kpi-clickable"
+            id="detail-kpi-failed-card"
+            title="Click to filter failed SKUs"
+          >
+            <span class="kpi-label" data-i18n="kpi_failed_images">
+              エラー / 失敗
+            </span>
+            <strong id="detail-kpi-failed" class="kpi-value kpi-red">0</strong>
+          </div>
+          <div class="kpi-card">
+            <span class="kpi-label" data-i18n="kpi_est_cost_single">
+              推定コスト
+            </span>
+            <strong id="detail-kpi-cost" class="kpi-value">$0.0000</strong>
+          </div>
+        </div>
+
+        <!-- Per-SKU Error Pills Summary Box -->
+        <div id="detail-failed-skus-card" class="failed-skus-card hidden">
+          <div class="failed-skus-header">
+            <strong
+              class="failed-skus-title"
+              data-i18n="failed_skus_heading"
+            >エラーが発生したSKU一覧 (クリックで詳細・再試行):</strong>
+            <div class="failed-skus-actions">
+              <button
+                type="button"
+                id="btn-retry-all-failed"
+                class="btn btn-google-primary btn-xs"
+                data-i18n="btn_retry_all_failed"
+              >
+                ↻ 失敗したSKUを一括再試行
+              </button>
+              <button
+                type="button"
+                id="btn-clear-failed-filter"
+                class="btn btn-google-text btn-xs hidden"
+                data-i18n="btn_show_all"
+              >すべて表示</button>
+            </div>
+          </div>
+          <div
+            id="detail-failed-skus-list"
+            class="failed-skus-pill-list"
+          ></div>
+        </div>
+
+        <!-- Per-SKU Conversion Items Table -->
+        <div class="google-card">
+          <div class="card-section-header detail-filter-bar">
+            <div>
+              <h2
+                class="card-section-title"
+                data-i18n="detail_items_heading"
+              >このリクエストの画像変換結果</h2>
+              <p class="calc-subtext" data-i18n="detail_click_sku_hint">
+                任意のSKU行をクリックすると、個別プレビュー・エラー原因の確認・再試行（請求額の自動更新）が行えます。
+              </p>
+            </div>
+            <div class="filter-controls-wrap">
+              <div
+                class="status-filter-pills"
+                id="detail-status-filters"
+                role="group"
+                aria-label="Filter SKUs by status"
+              >
+                <button
+                  type="button"
+                  class="filter-pill active"
+                  data-filter="ALL"
+                  id="filter-pill-all"
+                >All (0)</button>
+                <button
+                  type="button"
+                  class="filter-pill"
+                  data-filter="CONVERTED"
+                  id="filter-pill-converted"
+                >Converted (0)</button>
+                <button
+                  type="button"
+                  class="filter-pill"
+                  data-filter="SKIPPED_COMPLIANT"
+                  id="filter-pill-skipped"
+                >Skipped (0)</button>
+                <button
+                  type="button"
+                  class="filter-pill filter-pill-danger"
+                  data-filter="FAILED"
+                  id="filter-pill-failed"
+                >Failed (0)</button>
+                <button
+                  type="button"
+                  class="filter-pill"
+                  data-filter="PROCESSING"
+                  id="filter-pill-processing"
+                >Processing (0)</button>
+              </div>
+              <input
+                type="search"
+                id="detail-search-input"
+                class="google-input input-compact"
+                placeholder="SKU ID / URL / Error..."
+                aria-label="Filter by SKU ID, URL, or error"
+              />
+            </div>
+          </div>
+          <div class="table-responsive">
+            <table class="google-table">
+              <thead>
+                <tr>
+                  <th>SKU ID</th>
+                  <th data-i18n="th_status">ステータス</th>
+                  <th data-i18n="th_dimensions">サイズ (元 → 変換後)</th>
+                  <th data-i18n="th_source_url">元画像URL</th>
+                  <th data-i18n="th_converted_url">
+                    変換後GCS URL / エラー詳細
+                  </th>
+                </tr>
+              </thead>
+              <tbody id="detail-items-tbody"></tbody>
+            </table>
+          </div>
+          <div id="detail-pagination-bar" class="pagination-bar">
+            <div class="pagination-info" id="detail-page-info">
+              Showing 0–0 of 0
+            </div>
+            <div class="pagination-controls">
+              <label
+                for="detail-page-size"
+                class="pagination-label"
+                data-i18n="lbl_rows_per_page"
+              >表示件数:</label>
+              <select id="detail-page-size" class="pagination-select">
+                <option value="25" selected>25</option>
+                <option value="50">50</option>
+                <option value="100">100</option>
+              </select>
+              <div
+                id="detail-page-buttons"
+                class="pagination-btn-group"
+              ></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- VIEW D: Billing & Cost Estimator Screen (/billing) -->
+      <section id="view-billing" class="view-screen hidden">
+        <div class="page-header-row">
+          <div>
+            <h1 class="page-title" data-i18n="billing_title">
+              請求・コスト見積もり
+            </h1>
+            <p class="page-subtitle" data-i18n="billing_subtitle">
+              エンジン別の料金比較とリクエストごとのコスト内訳を確認できます。
+            </p>
+          </div>
+          <div class="header-btn-group">
+            <button
+              type="button"
+              id="btn-sync-gcp-pricing"
+              class="btn btn-google-outlined"
+              data-i18n="btn_sync_gcp_pricing"
+            >
+              ↻ GCP最新料金と同期
+            </button>
+            <button
+              type="button"
+              id="btn-billing-new-request"
+              class="btn btn-google-primary"
+              data-i18n="btn_raise_request"
+            >
+              + 新規リクエスト作成
+            </button>
+          </div>
+        </div>
+
+        <!-- Live GCP Cloud Billing Catalog Sync Status Card -->
+        <div id="billing-gcp-sync-card" class="gcp-sync-card">
+          <div class="gcp-sync-top">
+            <div class="gcp-sync-title-wrap">
+              <span class="chip chip-green" id="pricing-sync-badge">
+                GCP Pricing Synced
+              </span>
+              <strong id="pricing-sync-source" class="gcp-sync-source">
+                Google Cloud Billing Catalog (asia-northeast1 + global)
+              </strong>
+            </div>
+            <span id="pricing-sync-timestamp" class="gcp-sync-time">
+              Last synced: —
+            </span>
+          </div>
+          <div class="gcp-unit-rates-strip" id="pricing-unit-rates-strip">
+            <span class="unit-rate-pill" id="rate-pill-cpu">
+              Cloud Run vCPU: $0.000024/s
+            </span>
+            <span class="unit-rate-pill" id="rate-pill-mem">
+              Cloud Run RAM: $0.0000025/GiB·s
+            </span>
+            <span class="unit-rate-pill" id="rate-pill-gpu">
+              NVIDIA L4 GPU: $0.67/hr
+            </span>
+            <span class="unit-rate-pill" id="rate-pill-gcs">
+              GCS Class A PUT: $0.005/1K ops
+            </span>
+            <span class="unit-rate-pill" id="rate-pill-vertex">
+              Vertex Batch Discount: 50% OFF
+            </span>
+          </div>
+        </div>
+
+        <!-- Billing Overview KPIs -->
+        <div class="kpi-strip">
+          <div class="kpi-card">
+            <span class="kpi-label" data-i18n="billing_total_spend">
+              累計コスト合計
+            </span>
+            <strong
+              id="billing-kpi-spend"
+              class="kpi-value kpi-green"
+            >$0.0000</strong>
+          </div>
+          <div class="kpi-card">
+            <span class="kpi-label" data-i18n="billing_total_imgs">
+              変換済み画像総数
+            </span>
+            <strong id="billing-kpi-images" class="kpi-value">0</strong>
+          </div>
+          <div class="kpi-card">
+            <span class="kpi-label" data-i18n="billing_avg_cost">
+              1枚あたり平均コスト
+            </span>
+            <strong
+              id="billing-kpi-avg"
+              class="kpi-value kpi-blue"
+            >$0.000000</strong>
+          </div>
+        </div>
+
+        <!-- Interactive Cost Estimator Card -->
+        <div class="google-card billing-calc-card">
+          <div class="card-section-header calc-header-flex">
+            <div>
+              <h2 class="card-section-title" data-i18n="calc_heading">
+                コストシミュレーター (最適エンジンの選択)
+              </h2>
+              <p class="calc-subtext" data-i18n="calc_sub">
+                画像枚数と解像度を入力すると5つのエンジンの費用と目安時間を即座に比較します。
+              </p>
+            </div>
+            <div class="calc-controls">
+              <div class="calc-input-wrap">
+                <label
+                  for="calc-image-count"
+                  class="calc-label"
+                  data-i18n="calc_num_images"
+                >画像枚数</label>
+                <input
+                  type="number"
+                  id="calc-image-count"
+                  class="google-input calc-input"
+                  value="10000"
+                  min="1"
+                  max="10000000"
+                />
+              </div>
+              <div class="calc-input-wrap">
+                <label
+                  for="calc-resolution"
+                  class="calc-label"
+                  data-i18n="th_resolution"
+                >解像度</label>
+                <select id="calc-resolution" class="google-input calc-input">
+                  <option value="1500">1500 × 1500 px</option>
+                  <option value="500">500 × 500 px</option>
+                </select>
+              </div>
+            </div>
+          </div>
+          <div class="table-responsive">
+            <table class="google-table">
+              <thead>
+                <tr>
+                  <th data-i18n="th_engine">エンジン</th>
+                  <th data-i18n="calc_col_rate">10,000枚あたり単価</th>
+                  <th data-i18n="calc_col_est">推定コスト合計</th>
+                  <th data-i18n="calc_col_time">推定処理時間</th>
+                  <th data-i18n="calc_col_best">おすすめの用途</th>
+                  <th class="text-right" data-i18n="th_actions">操作</th>
+                </tr>
+              </thead>
+              <tbody id="billing-calculator-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Per-Request Cost Breakdown Table -->
+        <div class="google-card">
+          <div class="card-section-header">
+            <h2 class="card-section-title" data-i18n="billing_history_heading">
+              リクエスト別コスト内訳
+            </h2>
+          </div>
+          <div class="table-responsive">
+            <table class="google-table">
+              <thead>
+                <tr>
+                  <th data-i18n="th_req_id">リクエストID</th>
+                  <th data-i18n="th_created">作成日時 (UTC)</th>
+                  <th data-i18n="th_file">CSVファイル</th>
+                  <th data-i18n="th_engine">エンジン</th>
+                  <th data-i18n="th_resolution">解像度</th>
+                  <th data-i18n="kpi_images_upscaled">変換済み画像数</th>
+                  <th data-i18n="th_status">ステータス</th>
+                  <th class="text-right" data-i18n="th_cost">コスト (USD)</th>
+                </tr>
+              </thead>
+              <tbody id="billing-requests-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- MODAL: Individual SKU Inspection, Error Diagnostic & Retry -->
+      <div
+        id="sku-detail-modal"
+        class="sku-modal-backdrop hidden"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="sku-modal-sku-id"
+      >
+        <div class="sku-modal-card">
+          <div class="sku-modal-header">
+            <div class="sku-modal-title-group">
+              <span
+                class="sku-modal-eyebrow"
+                data-i18n="sku_modal_eyebrow"
+              >SKU 詳細・再試行</span>
+              <div class="sku-modal-title-row">
+                <h2 id="sku-modal-sku-id" class="sku-modal-title">SKU-1001</h2>
+                <span id="sku-modal-status-chip" class="chip">CONVERTED</span>
+              </div>
+            </div>
+            <button
+              type="button"
+              id="btn-close-sku-modal"
+              class="btn btn-google-text"
+              aria-label="Close"
+            >✕</button>
+          </div>
+
+          <!-- Failure Reason Diagnostic Box (Shown when SKU failed) -->
+          <div id="sku-modal-error-box" class="sku-modal-error-box hidden">
+            <div class="sku-modal-error-head">
+              <span
+                id="sku-modal-error-type"
+                class="sku-error-type-pill"
+              >Error</span>
+              <strong data-i18n="sku_modal_err_heading">
+                失敗原因の診断結果:
+              </strong>
+            </div>
+            <p id="sku-modal-error-text" class="sku-modal-error-msg">—</p>
+          </div>
+
+          <!-- SKU Metadata Strip -->
+          <div class="sku-modal-meta-grid">
+            <div class="sku-meta-item">
+              <span class="sku-meta-label" data-i18n="th_req_id">
+                リクエストID
+              </span>
+              <strong id="sku-modal-req-id" class="sku-meta-val">—</strong>
+            </div>
+            <div class="sku-meta-item">
+              <span class="sku-meta-label" data-i18n="kpi_engine_only">
+                エンジン
+              </span>
+              <strong id="sku-modal-engine" class="sku-meta-val">—</strong>
+            </div>
+            <div class="sku-meta-item">
+              <span class="sku-meta-label" data-i18n="th_dimensions">
+                サイズ (元 → 変換後)
+              </span>
+              <strong id="sku-modal-dims" class="sku-meta-val">—</strong>
+            </div>
+            <div class="sku-meta-item">
+              <span class="sku-meta-label" data-i18n="sku_modal_latency">
+                処理時間
+              </span>
+              <strong id="sku-modal-latency" class="sku-meta-val">—</strong>
+            </div>
+            <div class="sku-meta-item">
+              <span class="sku-meta-label" data-i18n="sku_modal_billing">
+                このSKUの課金額
+              </span>
+              <strong
+                id="sku-modal-cost"
+                class="sku-meta-val kpi-green"
+              >$0.0000</strong>
+            </div>
+          </div>
+
+          <!-- Interactive Before / After Slider Image Comparator -->
+          <div id="sku-comparator-section" class="sku-comparator-card">
+            <div class="sku-comparator-head">
+              <span
+                id="sku-comp-badge-before"
+                class="sku-comp-top-label sku-comp-top-before"
+              >Before</span>
+              <span
+                id="sku-comp-badge-after"
+                class="sku-comp-top-label sku-comp-top-after"
+              >After</span>
+            </div>
+
+            <div id="sku-comp-stage" class="sku-comp-stage">
+              <div id="sku-comp-loader" class="img-preview-loader hidden">
+                <span class="google-spinner-ring" aria-hidden="true"></span>
+              </div>
+              <img
+                id="sku-comp-after-img"
+                src=""
+                alt="After SKU Image"
+                class="sku-comp-img sku-comp-after-img"
+              />
+              <img
+                id="sku-comp-before-img"
+                src=""
+                alt="Before SKU Image"
+                class="sku-comp-img sku-comp-before-img"
+              />
+              <span
+                id="sku-comp-empty"
+                class="sku-preview-empty hidden"
+              >—</span>
+              <div id="sku-comp-divider" class="sku-comp-divider">
+                <div class="sku-comp-handle" aria-hidden="true">⇆</div>
+              </div>
+              <input
+                type="range"
+                id="sku-comp-range"
+                class="sku-comp-range-overlay"
+                min="0"
+                max="100"
+                value="50"
+                aria-label="Before and after image comparison slider"
+              />
+            </div>
+
+            <div class="sku-comp-bar">
+              <span class="sku-comp-bar-lbl">Before</span>
+              <input
+                type="range"
+                id="sku-comp-range-bar"
+                class="sku-comp-range-bar"
+                min="0"
+                max="100"
+                value="50"
+                aria-label="Comparison slider control"
+              />
+              <span class="sku-comp-bar-lbl">After</span>
+            </div>
+          </div>
+
+          <!-- Retry Controls & Dynamic Billing Update Notice -->
+          <div class="sku-modal-footer">
+            <div class="sku-modal-retry-controls">
+              <label
+                for="sku-modal-retry-engine"
+                class="calc-label"
+                data-i18n="sku_modal_retry_engine_lbl"
+              >再試行エンジン:</label>
+              <select
+                id="sku-modal-retry-engine"
+                class="google-input sku-retry-select"
+              >
+                <option value="local-lanczos-canvas">
+                  Local Smart Lanczos + White Canvas
+                </option>
+                <option value="realesrgan">
+                  Real-ESRGAN (x4plus on Cloud Run L4 GPU)
+                </option>
+                <option value="gemini-3.1-flash-lite-image">
+                  Vertex AI Gemini 3.1 Flash Lite Image
+                </option>
+                <option value="gemini-3.1-flash-image">
+                  Vertex AI Gemini 3.1 Flash Image
+                </option>
+                <option value="gemini-3-pro-image">
+                  Vertex AI Gemini 3 Pro Image
+                </option>
+              </select>
+            </div>
+            <div class="sku-modal-footer-btns">
+              <button
+                type="button"
+                id="btn-sku-modal-close-bottom"
+                class="btn btn-google-outlined"
+                data-i18n="btn_close"
+              >閉じる</button>
+              <button
+                type="button"
+                id="btn-sku-modal-retry"
+                class="btn btn-google-primary"
+                data-i18n="btn_retry_sku"
+              >
+                ↻ このSKUを再試行 (請求額を自動更新)
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <script src="/static/app.js" defer></script>
+</body>
+</html>

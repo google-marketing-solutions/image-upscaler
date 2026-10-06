@@ -1,0 +1,20 @@
+{
+  "compilerOptions": {
+    "target": "es2022",
+    "module": "commonjs",
+    "lib": ["es2022", "dom"],
+    "allowJs": true,
+    "checkJs": false,
+    "noEmit": true,
+    "strict": false,
+    "rootDir": ".",
+    "outDir": "build"
+  },
+  "include": [
+    "tests/**/*.js"
+  ],
+  "exclude": [
+    "node_modules",
+    ".venv"
+  ]
+}
