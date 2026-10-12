@@ -38,6 +38,7 @@ pyink-use-majority-quotes = true
 
 [tool.pylint.main]
 max-line-length = 80
+indent-string = "  "
 disable = [
     "broad-exception-caught",
     "duplicate-code",
@@ -58,4 +59,6 @@ disable = [
     "too-many-positional-arguments",
     "too-many-return-statements",
     "too-many-statements",
+    "unknown-option-value",
+    "wrong-import-order",
 ]

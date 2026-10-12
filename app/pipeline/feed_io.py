@@ -23,10 +23,18 @@ from typing import Dict, Iterable, List, Sequence
 
 from app.models import ConversionLogEntry
 from app.models import FeedInputRow
+from app.models import MAX_ADDITIONAL_IMAGES
 from app.models import SupplementalFeedRow
 
 # Output CSV 3-column header specification: id,input_url,scaled_image_url
 GMC_SUPPLEMENTAL_COLUMNS = ("id", "input_url", "scaled_image_url")
+GMC_SUPPLEMENTAL_WITH_ADDITIONAL_COLUMNS = (
+    "id",
+    "input_url",
+    "scaled_image_url",
+    "additional_image_link",
+    "additional_scaled_image_link",
+)
 
 # Daily conversion log CSV header specification for
 # `gs://<project_dir>/status/{YYYYMMDD}/log.csv`
@@ -45,26 +53,97 @@ DAILY_STATUS_LOG_COLUMNS = (
     "processing_ms",
 )
 
+_PRIMARY_IMAGE_HEADERS = {
+    "image_link",
+    "input_url",
+    "image_url",
+    "url",
+    "image",
+    "link",
+    "image link",
+    "src",
+}
+
+_ID_HEADERS = {
+    "id",
+    "sku",
+    "offer_id",
+    "item_id",
+}
+
+
+def _is_additional_image_header(header_lower: str) -> bool:
+  """Return True if header matches GMC additional_image_link column variants."""
+  if header_lower in (
+      "additional_image_link",
+      "additional_image_links",
+      "additional image link",
+      "additional image links",
+  ):
+    return True
+  return bool(
+      re.match(
+          r"^additional[_\s]?image(?:[_\s]?links?)?[_\s]?\d+$", header_lower
+      )
+  )
+
+
+def _clean_url_token(token: str) -> str:
+  """Strip surrounding whitespace and ASCII/smart quotes from a URL token."""
+  return (token or "").strip().strip("\"“”'").strip()
+
+
+def _is_supported_url(token: str) -> bool:
+  """Return True if token begins with http://, https://, or synthetic://."""
+  cleaned = _clean_url_token(token)
+  return cleaned.startswith(("http://", "https://", "synthetic://"))
+
 
 def _split_additional_urls(raw_val: str) -> List[str]:
-  """Split comma- or pipe-delimited additional_image_link values into URLs."""
+  """Split comma-, pipe-, or semicolon-delimited GMC image URLs.
+
+  Supports standard comma-separated URLs, pipe-delimited URLs, `%2C`-encoded
+  commas inside URLs, and GMC's quoted comma-separated URL syntax
+  (`"https://example.com/img2,3.jpg","https://example.com/img2,4.jpg"`).
+
+  Args:
+    raw_val: Raw cell string containing one or more image URLs.
+
+  Returns:
+    List of cleaned individual URL strings.
+  """
   if not raw_val or not raw_val.strip():
     return []
-  parts = re.split(r"\s*[|,]\s*(?=https?://|synthetic://)", raw_val.strip())
-  return [p.strip() for p in parts if p and p.strip()]
+  normalized = raw_val.strip().replace("“", '"').replace("”", '"')
+  parts = re.split(
+      r'\s*[|,;]\s*(?=["\']?(?:https?://|synthetic://))',
+      normalized,
+  )
+  urls: List[str] = []
+  for part in parts:
+    cleaned = _clean_url_token(part)
+    if cleaned and _is_supported_url(cleaned):
+      urls.append(cleaned)
+  return urls
 
 
 def parse_delimited_feed(
     content: str, delimiter: str = ","
 ) -> List[FeedInputRow]:
-  """Parse CSV or TSV content containing image URLs.
+  """Parse CSV or TSV content containing primary and additional image URLs.
 
   Supports:
   1. Standard GMC feeds (`id`, `image_link`, `additional_image_link` /
-     `additional_image_links`)
-  2. Generic CSVs containing an `image_link`, `image_url`, `url`, or `image`
-     column (auto-generates `id` if omitted)
-  3. Headerless single-column CSVs of `http(s)://` or `synthetic://` URLs
+     `additional_image_links`), including repeated `additional_image_link`
+     columns, numbered columns (`additional_image_link_1`..`10`), comma- or
+     pipe-separated URLs, and quoted URLs containing commas (up to 10
+     additional images per SKU).
+  2. Additional-only GMC supplemental feeds (`id,additional_image_link` where
+     `image_link` is omitted or empty).
+  3. Generic CSVs containing an `image_link`, `image_url`, `url`, or `image`
+     column (auto-generates `id` if omitted).
+  4. Headerless single- or multi-column CSVs of `http(s)://` or `synthetic://`
+     URLs.
 
   Args:
     content: Raw CSV or TSV text content.
@@ -88,128 +167,137 @@ def parse_delimited_feed(
   if "\t" in first_line and "," not in first_line:
     delimiter = "\t"
 
-  # Case 3a: Headerless single-column list of URLs
-  if (
-      first_line.startswith(("http://", "https://", "synthetic://"))
-      and delimiter not in first_line
-  ):
+  # Case 4a: Headerless single-column list of URLs
+  if _is_supported_url(first_line) and delimiter not in first_line:
     return [
         FeedInputRow(
             id=f"SKU-{idx + 1:04d}",
-            image_link=line,
+            image_link=_clean_url_token(line),
             additional_image_links=[],
         )
         for idx, line in enumerate(lines)
-        if line.startswith(("http://", "https://", "synthetic://"))
+        if _is_supported_url(line)
     ]
 
-  # Case 3b: Headerless multi-column CSV where the first row already contains
-  # a URL
-  first_row_cells = next(
-      csv.reader(io.StringIO(first_line), delimiter=delimiter), []
+  all_csv_rows = list(
+      csv.reader(io.StringIO(cleaned_content), delimiter=delimiter)
   )
-  if any(
-      c.strip().startswith(("http://", "https://", "synthetic://"))
-      for c in first_row_cells
-  ):
+  if not all_csv_rows:
+    raise ValueError("Feed content is empty")
+
+  first_row_cells = all_csv_rows[0]
+  # Case 4b: Headerless multi-column CSV where the first row already contains
+  # a URL
+  if any(_is_supported_url(c) for c in first_row_cells):
     headerless_rows: List[FeedInputRow] = []
-    for idx, row_cells in enumerate(
-        csv.reader(io.StringIO(cleaned_content), delimiter=delimiter)
-    ):
+    for idx, row_cells in enumerate(all_csv_rows):
       cleaned_cells = [c.strip() for c in row_cells if c and c.strip()]
       if not cleaned_cells:
         continue
-      url_cells = [
-          c
-          for c in cleaned_cells
-          if c.startswith(("http://", "https://", "synthetic://"))
-      ]
+      url_cells: List[str] = []
+      non_url_cells: List[str] = []
+      for cell in cleaned_cells:
+        split_urls = _split_additional_urls(cell)
+        if split_urls:
+          url_cells.extend(split_urls)
+        elif not _is_supported_url(cell):
+          non_url_cells.append(cell)
       if not url_cells:
         continue
-      non_url_cells = [
-          c
-          for c in cleaned_cells
-          if not c.startswith(("http://", "https://", "synthetic://"))
-      ]
       sku_id = non_url_cells[0] if non_url_cells else f"SKU-{idx + 1:04d}"
       headerless_rows.append(
           FeedInputRow(
               id=sku_id,
               image_link=url_cells[0],
-              additional_image_links=url_cells[1:],
+              additional_image_links=url_cells[1 : 1 + MAX_ADDITIONAL_IMAGES],
           )
       )
     if headerless_rows:
       return headerless_rows
 
-  reader = csv.DictReader(io.StringIO(cleaned_content), delimiter=delimiter)
-  if not reader.fieldnames:
+  raw_headers = [(h or "").strip() for h in first_row_cells]
+  if not any(raw_headers):
     raise ValueError("Feed is missing header columns")
 
-  raw_dict_rows = list(reader)
-  if not raw_dict_rows:
+  data_rows = all_csv_rows[1:]
+  if not data_rows:
     raise ValueError("No valid product rows with an image URL found in CSV")
 
-  norm_headers = {h.strip().lower(): h for h in reader.fieldnames if h}
-  img_col = (
-      norm_headers.get("image_link")
-      or norm_headers.get("input_url")
-      or norm_headers.get("image_url")
-      or norm_headers.get("url")
-      or norm_headers.get("image")
-      or norm_headers.get("link")
-      or norm_headers.get("image link")
-      or norm_headers.get("src")
-  )
-  if not img_col:
-    # Auto-detect the first column that contains an http(s):// URL
-    for h in reader.fieldnames:
-      if not h:
-        continue
-      val = (raw_dict_rows[0].get(h) or "").strip()
-      if val.startswith(("http://", "https://", "synthetic://")):
-        img_col = h
-        break
-
-  if not img_col:
-    raise ValueError(
-        "CSV must include an image URL column ('image_link', 'image_url',"
-        " 'url', or 'image')."
-    )
-
-  id_col = (
-      norm_headers.get("id")
-      or norm_headers.get("sku")
-      or norm_headers.get("offer_id")
-      or norm_headers.get("item_id")
-  )
-  add_cols = [
-      orig_name
-      for low_name, orig_name in norm_headers.items()
-      if low_name in ("additional_image_link", "additional_image_links")
+  low_headers = [h.lower() for h in raw_headers]
+  id_indices = [i for i, h in enumerate(low_headers) if h in _ID_HEADERS]
+  img_indices = [
+      i for i, h in enumerate(low_headers) if h in _PRIMARY_IMAGE_HEADERS
+  ]
+  add_indices = [
+      i for i, h in enumerate(low_headers) if _is_additional_image_header(h)
   ]
 
-  rows: List[FeedInputRow] = []
-  for idx, raw_row in enumerate(raw_dict_rows):
-    raw_img = (raw_row.get(img_col) or "").strip()
-    if not raw_img:
-      continue
-    raw_id = (
-        (raw_row.get(id_col) or "").strip() if id_col else f"SKU-{idx + 1:04d}"
+  if not img_indices and not add_indices:
+    # Auto-detect the first column that contains an http(s):// or synthetic://
+    # URL in the first non-empty data row
+    for row_cells in data_rows:
+      for col_idx, val in enumerate(row_cells):
+        if _is_supported_url(val):
+          img_indices = [col_idx]
+          break
+      if img_indices:
+        break
+
+  if not img_indices and not add_indices:
+    raise ValueError(
+        "CSV must include an image URL column ('image_link', "
+        "'additional_image_link', 'image_url', 'url', or 'image')."
     )
+
+  rows: List[FeedInputRow] = []
+  num_headers = len(raw_headers)
+  for idx, row_cells in enumerate(data_rows):
+    if not row_cells or not any(c and c.strip() for c in row_cells):
+      continue
+
+    raw_id = ""
+    for id_idx in id_indices:
+      if id_idx < len(row_cells) and row_cells[id_idx].strip():
+        raw_id = row_cells[id_idx].strip()
+        break
     if not raw_id:
       raw_id = f"SKU-{idx + 1:04d}"
 
-    additional_urls: List[str] = []
-    for col in add_cols:
-      cell = raw_row.get(col) or ""
-      additional_urls.extend(_split_additional_urls(cell))
+    primary_candidates: List[str] = []
+    for img_idx in img_indices:
+      if img_idx < len(row_cells):
+        cell_val = row_cells[img_idx].strip()
+        if cell_val:
+          split_prim = _split_additional_urls(cell_val)
+          if split_prim:
+            primary_candidates.extend(split_prim)
+          else:
+            primary_candidates.append(_clean_url_token(cell_val))
+
+    primary_url = primary_candidates[0] if primary_candidates else ""
+    additional_urls: List[str] = list(primary_candidates[1:])
+
+    for add_idx in add_indices:
+      if add_idx < len(row_cells):
+        cell_val = row_cells[add_idx].strip()
+        if cell_val:
+          additional_urls.extend(_split_additional_urls(cell_val))
+
+    # Capture overflow cells beyond the header count when a user pastes
+    # quoted comma-separated URLs like `"https://.../a,1.jpg","https://.../b"`
+    if len(row_cells) > num_headers:
+      for extra_cell in row_cells[num_headers:]:
+        if extra_cell and extra_cell.strip():
+          additional_urls.extend(_split_additional_urls(extra_cell))
+
+    if not primary_url and not additional_urls:
+      continue
 
     rows.append(
         FeedInputRow(
             id=raw_id,
-            image_link=raw_img,
-            additional_image_links=additional_urls,
+            image_link=primary_url,
+            additional_image_links=additional_urls[:MAX_ADDITIONAL_IMAGES],
         )
     )
 
@@ -222,57 +310,120 @@ def serialize_supplemental_feed(
     rows: Sequence[SupplementalFeedRow],
     delimiter: str = ",",
 ) -> str:
-  """Serialize rows into Output CSV with 3-column GMC supplemental headers.
+  """Serialize rows into GMC Supplemental Feed CSV format.
+
+  Emits `id,input_url,scaled_image_url` when only primary images exist, or adds
+  `additional_image_link,additional_scaled_image_link` when any row includes
+  additional images.
 
   Args:
     rows: Sequence of SupplementalFeedRow records.
     delimiter: Output CSV delimiter character.
 
   Returns:
-    Formatted CSV string with `id,input_url,scaled_image_url` header.
+    Formatted CSV string.
 
   Raises:
-    ValueError: If any scaled_image_url does not use the `https://` scheme.
+    ValueError: If any non-empty scaled URL does not use the `https://` scheme.
   """
   buf = io.StringIO()
   writer = csv.writer(buf, delimiter=delimiter, lineterminator="\n")
-  writer.writerow(GMC_SUPPLEMENTAL_COLUMNS)
+  has_additional = any(
+      bool(
+          (r.additional_image_link and r.additional_image_link.strip())
+          or (
+              r.additional_scaled_image_link
+              and r.additional_scaled_image_link.strip()
+          )
+      )
+      for r in rows
+  )
+  headers = (
+      GMC_SUPPLEMENTAL_WITH_ADDITIONAL_COLUMNS
+      if has_additional
+      else GMC_SUPPLEMENTAL_COLUMNS
+  )
+  writer.writerow(headers)
 
   for row in rows:
-    if not row.image_link.startswith("https://"):
+    scaled_add = (
+        row.additional_scaled_image_link or row.additional_image_link or ""
+    )
+    orig_add = row.additional_image_link or ""
+    if not row.image_link and not scaled_add:
+      raise ValueError(
+          f"GMC Supplemental Feed row for SKU {row.id} has no image URLs"
+      )
+    if row.image_link and not row.image_link.startswith("https://"):
       raise ValueError(
           "GMC Supplemental Feed requires 'https://' URLs for "
           f"scaled_image_url (SKU {row.id}: {row.image_link})"
       )
-    writer.writerow([row.id, row.input_url, row.image_link])
+    if scaled_add:
+      for add_u in _split_additional_urls(scaled_add):
+        if not add_u.startswith("https://"):
+          raise ValueError(
+              "GMC Supplemental Feed requires 'https://' URLs for "
+              f"additional_scaled_image_link (SKU {row.id}: {add_u})"
+          )
+    if has_additional:
+      writer.writerow([
+          row.id,
+          row.input_url,
+          row.image_link,
+          orig_add,
+          scaled_add,
+      ])
+    else:
+      writer.writerow([row.id, row.input_url, row.image_link])
 
   return buf.getvalue()
 
 
 def ensure_output_csv_has_input_url(input_csv: str, output_csv: str) -> str:
-  """Ensure output CSV has exact `id,input_url,scaled_image_url` headers.
+  """Ensure output CSV has normalized GMC supplemental headers.
 
   Args:
     input_csv: Original input CSV text used for fallback URL lookup.
     output_csv: Existing output CSV text.
 
   Returns:
-    Normalized 3-column CSV string.
+    Normalized 3- or 5-column CSV string.
   """
   if not output_csv or not output_csv.strip():
     return output_csv
   first_line = output_csv.strip().splitlines()[0].strip()
-  if first_line == ",".join(GMC_SUPPLEMENTAL_COLUMNS):
+  if first_line in (
+      ",".join(GMC_SUPPLEMENTAL_COLUMNS),
+      ",".join(GMC_SUPPLEMENTAL_WITH_ADDITIONAL_COLUMNS),
+  ):
     return output_csv
   try:
     in_map: Dict[str, str] = {}
+    in_add_map: Dict[str, str] = {}
     if input_csv and input_csv.strip():
       in_rows = parse_delimited_feed(input_csv)
       in_map = {r.id: r.image_link for r in in_rows}
-    reader = csv.DictReader(io.StringIO(output_csv.strip()))
+      in_add_map = {
+          r.id: ",".join(r.additional_image_links)
+          for r in in_rows
+          if r.additional_image_links
+      }
+    reader = list(csv.DictReader(io.StringIO(output_csv.strip())))
+    has_additional = any(
+        bool(
+            (r.get("additional_image_link") or "").strip()
+            or (r.get("additional_scaled_image_link") or "").strip()
+        )
+        for r in reader
+    )
     buf = io.StringIO()
     writer = csv.writer(buf, delimiter=",", lineterminator="\n")
-    writer.writerow(GMC_SUPPLEMENTAL_COLUMNS)
+    writer.writerow(
+        GMC_SUPPLEMENTAL_WITH_ADDITIONAL_COLUMNS
+        if has_additional
+        else GMC_SUPPLEMENTAL_COLUMNS
+    )
     for out_row in reader:
       sku_id = (out_row.get("id") or "").strip()
       orig_url = (out_row.get("input_url") or "").strip() or in_map.get(
@@ -281,7 +432,20 @@ def ensure_output_csv_has_input_url(input_csv: str, output_csv: str) -> str:
       scaled_url = (out_row.get("scaled_image_url") or "").strip() or (
           out_row.get("image_link") or ""
       ).strip()
-      writer.writerow([sku_id, orig_url, scaled_url])
+      raw_add = (out_row.get("additional_image_link") or "").strip()
+      raw_scaled_add = (
+          out_row.get("additional_scaled_image_link") or ""
+      ).strip()
+      if raw_scaled_add:
+        orig_add = raw_add or in_add_map.get(sku_id, "")
+        scaled_add = raw_scaled_add
+      else:
+        scaled_add = raw_add
+        orig_add = in_add_map.get(sku_id, "") or raw_add
+      if has_additional:
+        writer.writerow([sku_id, orig_url, scaled_url, orig_add, scaled_add])
+      else:
+        writer.writerow([sku_id, orig_url, scaled_url])
     return buf.getvalue()
   except Exception:  # pylint: disable=broad-exception-caught
     return output_csv

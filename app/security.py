@@ -43,6 +43,9 @@ IMAGE_MAGIC_SIGNATURES: Tuple[Tuple[bytes, str], ...] = (
     (b"\x89PNG\r\n\x1a\n", "PNG"),
     (b"GIF87a", "GIF"),
     (b"GIF89a", "GIF"),
+    (b"BM", "BMP"),
+    (b"II*\x00", "TIFF"),
+    (b"MM\x00*", "TIFF"),
 )
 
 
@@ -53,7 +56,7 @@ def inspect_image_magic_bytes(data: bytes) -> str:
     data: Raw image byte payload.
 
   Returns:
-    Detected image format string (JPEG, PNG, GIF, or WEBP).
+    Detected image format string (JPEG, PNG, GIF, WEBP, BMP, or TIFF).
 
   Raises:
     ValueError: If the content is not a valid allow-listed image format.
@@ -70,7 +73,7 @@ def inspect_image_magic_bytes(data: bytes) -> str:
 
   raise ValueError(
       "File content failed magic-byte validation (allowed: JPEG, PNG, WEBP,"
-      " GIF)"
+      " GIF, BMP, TIFF)"
   )
 
 

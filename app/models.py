@@ -22,6 +22,9 @@ from typing import Dict, List, Literal, Optional
 from pydantic import BaseModel
 from pydantic import Field
 from pydantic import field_validator
+from pydantic import model_validator
+
+MAX_ADDITIONAL_IMAGES = 10
 
 
 class TargetResolution(int, enum.Enum):
@@ -51,14 +54,13 @@ class FeedInputRow(BaseModel):
       description="GMC Product ID (offer_id)",
   )
   image_link: str = Field(
-      ...,
-      min_length=1,
+      default="",
       max_length=2048,
       description="Primary product image URL",
   )
   additional_image_links: List[str] = Field(
       default_factory=list,
-      description="Zero or more additional product image URLs",
+      description="Up to 10 additional product image URLs per GMC spec",
   )
 
   @field_validator("id")
@@ -69,6 +71,26 @@ class FeedInputRow(BaseModel):
       raise ValueError("Product 'id' must not be empty")
     return cleaned
 
+  @field_validator("image_link")
+  @classmethod
+  def strip_image_link(cls, value: str) -> str:
+    return (value or "").strip()
+
+  @field_validator("additional_image_links")
+  @classmethod
+  def normalize_additional_links(cls, value: List[str]) -> List[str]:
+    cleaned = [u.strip() for u in value or [] if u and u.strip()]
+    return cleaned[:MAX_ADDITIONAL_IMAGES]
+
+  @model_validator(mode="after")
+  def verify_at_least_one_url(self) -> FeedInputRow:
+    if not self.image_link and not self.additional_image_links:
+      raise ValueError(
+          "Row must contain at least one 'image_link' or "
+          "'additional_image_link' URL"
+      )
+    return self
+
 
 class SupplementalFeedRow(BaseModel):
   """GMC Supplemental Feed row with id, input_url, and image links."""
@@ -77,6 +99,7 @@ class SupplementalFeedRow(BaseModel):
   input_url: str = ""
   image_link: str
   additional_image_link: str = ""
+  additional_scaled_image_link: str = ""
 
 
 class ConversionLogEntry(BaseModel):

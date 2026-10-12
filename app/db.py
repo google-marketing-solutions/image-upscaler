@@ -100,10 +100,10 @@ class FirestoreRequestDB:
     # Cache parsed input rows per request_id so 2s live polling never
     # re-reads GCS
     self._in_rows_cache: Dict[str, List[FeedInputRow]] = {}
-    # Write-through + short TTL cache of per-SKU ConversionLogEntry maps by
-    # request_id
+    # Write-through + short TTL cache of per-(sku_id, source_image_url)
+    # ConversionLogEntry maps by request_id
     self._logs_cache_by_req: Dict[
-        str, Tuple[float, Dict[str, ConversionLogEntry]]
+        str, Tuple[float, Dict[Tuple[str, str], ConversionLogEntry]]
     ] = {}
     self._logs_cache_updated_at: Dict[str, str] = {}
     # Adaptive TTL write-through cache for list_requests() to eliminate
@@ -155,7 +155,10 @@ class FirestoreRequestDB:
     with self._lock:
       self._logs_cache_by_req[request_id] = (
           time.monotonic(),
-          {e.sku_id: self._normalize_log_entry(e) for e in entries},
+          {
+              (e.sku_id, e.source_image_url): self._normalize_log_entry(e)
+              for e in entries
+          },
       )
       if updated_at_utc:
         self._logs_cache_updated_at[request_id] = updated_at_utc
@@ -486,7 +489,7 @@ class FirestoreRequestDB:
       for e in entries:
         norm_e = self._normalize_log_entry(e)
         _, sku_map = self._logs_cache_by_req.get(e.request_id, (now_mono, {}))
-        sku_map[e.sku_id] = norm_e
+        sku_map[(e.sku_id, e.source_image_url)] = norm_e
         self._logs_cache_by_req[e.request_id] = (now_mono, sku_map)
 
     if self.use_mock_db:
@@ -586,11 +589,11 @@ class FirestoreRequestDB:
       request_id: str,
       force_refresh: bool = False,
   ) -> List[ConversionLogEntry]:
-    """Fetch per-SKU conversion log items for a specific `request_id`.
+    """Fetch per-image conversion log items for a specific `request_id`.
 
     When a job is PROCESSING, merges already-completed `conversion_logs`
-    documents with the remaining pending SKUs from `input.csv` so the user
-    sees live parallel progress.
+    documents with the remaining pending images from `input.csv` so the user
+    sees live parallel progress across primary and additional images.
 
     Args:
       request_id: Unique request identifier.
@@ -653,7 +656,7 @@ class FirestoreRequestDB:
         with self._lock:
           self._logs_cache_by_req[request_id] = (
               time.monotonic(),
-              {e.sku_id: e for e in results},
+              {(e.sku_id, e.source_image_url): e for e in results},
           )
           if rec_updated_at:
             self._logs_cache_updated_at[request_id] = rec_updated_at
@@ -661,67 +664,94 @@ class FirestoreRequestDB:
     if not rec:
       return results
     if results and not is_in_progress:
-      # Completed job: preserve input CSV row order if available,
-      # otherwise sort by sku_id
+      # Completed job: preserve input CSV row + image order if available,
+      # otherwise sort by (sku_id, source_image_url)
       in_rows = self._get_cached_input_rows(request_id)
       if in_rows:
-        order_map = {r.id: idx for idx, r in enumerate(in_rows)}
-        results.sort(key=lambda r: (order_map.get(r.sku_id, 999999), r.sku_id))
+        pair_order: Dict[Tuple[str, str], int] = {}
+        sku_order: Dict[str, int] = {}
+        seq_idx = 0
+        for row_idx, r in enumerate(in_rows):
+          sku_order.setdefault(r.id, row_idx)
+          row_urls = ([r.image_link] if r.image_link else []) + list(
+              r.additional_image_links
+          )
+          for u in row_urls:
+            pair_order.setdefault((r.id, u), seq_idx)
+            seq_idx += 1
+        results.sort(
+            key=lambda e: (
+                pair_order.get((e.sku_id, e.source_image_url), 999999),
+                sku_order.get(e.sku_id, 999999),
+                e.sku_id,
+                e.source_image_url,
+            )
+        )
       else:
-        results.sort(key=lambda r: r.sku_id)
+        results.sort(key=lambda r: (r.sku_id, r.source_image_url))
       return results
 
-    # Job is PROCESSING (merge completed logs + remaining pending SKUs) OR
+    # Job is PROCESSING (merge completed logs + remaining pending images) OR
     # fallback when logs absent
     in_rows = self._get_cached_input_rows(request_id)
     if not in_rows:
       return results
 
+    completed_by_pair: Dict[Tuple[str, str], ConversionLogEntry] = {
+        (entry.sku_id, entry.source_image_url): entry for entry in results
+    }
     completed_by_sku: Dict[str, ConversionLogEntry] = {
         entry.sku_id: entry for entry in results
     }
     merged_items: List[ConversionLogEntry] = []
     for r in in_rows:
-      if r.id in completed_by_sku:
-        merged_items.append(completed_by_sku[r.id])
-      elif is_in_progress:
-        merged_items.append(
-            ConversionLogEntry(
-                timestamp_utc=rec.updated_at_utc,
-                date_yyyymmdd=rec.date_yyyymmdd,
-                request_id=request_id,
-                sku_id=r.id,
-                source_image_url=r.image_link,
-                converted_gcs_url="",
-                engine_id=rec.engine_id,
-                target_resolution=rec.target_resolution,
-                original_dimensions="Processing...",
-                output_dimensions=(
-                    f"{rec.target_resolution}x{rec.target_resolution}"
-                ),
-                status="PROCESSING",
-                processing_ms=0.0,
-                error_message="",
-            )
-        )
-      else:
-        merged_items.append(
-            ConversionLogEntry(
-                timestamp_utc=rec.updated_at_utc,
-                date_yyyymmdd=rec.date_yyyymmdd,
-                request_id=request_id,
-                sku_id=r.id,
-                source_image_url=r.image_link,
-                converted_gcs_url="",
-                engine_id=rec.engine_id,
-                target_resolution=rec.target_resolution,
-                original_dimensions="0x0",
-                output_dimensions="0x0",
-                status="FAILED",
-                processing_ms=0.0,
-                error_message=rec.error_message or "Image conversion failed",
-            )
-        )
+      row_urls = ([r.image_link] if r.image_link else []) + list(
+          r.additional_image_links
+      )
+      for img_url in row_urls:
+        matched_entry = completed_by_pair.get((r.id, img_url))
+        if matched_entry is None and len(row_urls) == 1:
+          matched_entry = completed_by_sku.get(r.id)
+        if matched_entry is not None:
+          merged_items.append(matched_entry)
+        elif is_in_progress:
+          merged_items.append(
+              ConversionLogEntry(
+                  timestamp_utc=rec.updated_at_utc,
+                  date_yyyymmdd=rec.date_yyyymmdd,
+                  request_id=request_id,
+                  sku_id=r.id,
+                  source_image_url=img_url,
+                  converted_gcs_url="",
+                  engine_id=rec.engine_id,
+                  target_resolution=rec.target_resolution,
+                  original_dimensions="Processing...",
+                  output_dimensions=(
+                      f"{rec.target_resolution}x{rec.target_resolution}"
+                  ),
+                  status="PROCESSING",
+                  processing_ms=0.0,
+                  error_message="",
+              )
+          )
+        else:
+          merged_items.append(
+              ConversionLogEntry(
+                  timestamp_utc=rec.updated_at_utc,
+                  date_yyyymmdd=rec.date_yyyymmdd,
+                  request_id=request_id,
+                  sku_id=r.id,
+                  source_image_url=img_url,
+                  converted_gcs_url="",
+                  engine_id=rec.engine_id,
+                  target_resolution=rec.target_resolution,
+                  original_dimensions="0x0",
+                  output_dimensions="0x0",
+                  status="FAILED",
+                  processing_ms=0.0,
+                  error_message=rec.error_message or "Image conversion failed",
+              )
+          )
     return merged_items
 
   @staticmethod

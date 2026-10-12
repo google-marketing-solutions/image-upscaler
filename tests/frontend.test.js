@@ -311,7 +311,14 @@ test('route parsing, CSV row counting, and ETA formatting work', () => {
   assert.equal(hooks.parseRouteRequestId('/billing'), null);
 
   const sampleCsv = hooks.getSampleCsvString();
+  assert.ok(sampleCsv.includes('additional_image_link'));
   assert.equal(hooks.countCsvRows(sampleCsv), 3);
+
+  const multiCsv =
+    'id,image_link,additional_image_link\n' +
+    'SKU-1,https://example.com/1.jpg,' +
+    '"https://example.com/2.jpg,https://example.com/3.jpg"\n';
+  assert.equal(hooks.countCsvRows(multiCsv), 3);
 
   assert.equal(hooks.formatSecondsCompact(45), '45s');
   assert.equal(hooks.formatSecondsCompact(125), '2m 5s');

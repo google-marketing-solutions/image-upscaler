@@ -285,7 +285,7 @@
       wiz_s1_heading: "Upload your CSV file with Image URLs",
       wiz_s1_sub:
         "Upload a CSV or TSV file containing product image links (e.g., " +
-        "id,image_link or a list of URLs).",
+        "id,image_link,additional_image_link or url).",
       dropzone_default_title: "Click to select a CSV file",
       dropzone_default_sub: "Supports .csv, .tsv, or .txt up to 10 MB",
       btn_download_template: "Download sample template",
@@ -2511,7 +2511,7 @@
       Math.max(Number(rec.skipped_images || 0), liveSkipped);
     const displayFailed = Math.max(Number(rec.failed_images || 0), liveFailed);
     const totalSkus =
-      Math.max(items.length, Number(rec.total_skus || rec.total_images || 0));
+      Math.max(items.length, Number(rec.total_images || rec.total_skus || 0));
     const completedSkus =
       Math.min(totalSkus, displayUpscaled + displaySkipped + displayFailed);
     const progressPct =
@@ -2681,11 +2681,24 @@
     if (!lines.length) {
       return 0;
     }
-    if (lines[0].indexOf("http://") === 0 ||
-      lines[0].indexOf("https://") === 0) {
-      return lines.length;
+    const urlPattern = /(?:https?:\/\/|synthetic:\/\/)/gi;
+    const firstMatches = lines[0].match(urlPattern);
+    const dataLines = firstMatches && firstMatches.length > 0
+      ? lines
+      : lines.slice(1);
+    if (!dataLines.length) {
+      return 0;
     }
-    return Math.max(0, lines.length - 1);
+    let totalImages = 0;
+    dataLines.forEach(function (line) {
+      const matches = line.match(urlPattern);
+      if (matches && matches.length > 0) {
+        totalImages += Math.min(11, matches.length);
+      } else {
+        totalImages += 1;
+      }
+    });
+    return totalImages;
   }
 
   function setCsvPayload(filename, text) {
@@ -2847,16 +2860,16 @@
 
   function getSampleCsvString() {
     return (
-      "id,image_link\n" +
+      "id,image_link,additional_image_link\n" +
       "SKU-1001,https://encrypted-tbn0.gstatic.com/shopping?q=tbn:ANd9GcQJ3Xa" +
       "K98ATkUigYEZg49J4iOkGWhI-YXYZxYkH_PUzE1xt5J69z_onYRtyVKBn3-pUXHKQY2iZM" +
-      "3pv8jNlyxLG1KCqSbR0gQ\n" +
+      "3pv8jNlyxLG1KCqSbR0gQ,\n" +
       "SKU-1002,https://encrypted-tbn2.gstatic.com/shopping?q=tbn:ANd9GcTft0z" +
       "h_QBdJfc79nx8KjQW-UqAM_Ca7ZDFilTcfP29g9sCCoZ5FCQyqg9kA9-YRG5-CQY036m8e" +
-      "M15Fl-C1HciFjyvl2olwGFW4yA-Tu0S0JUmQ9Nw9WQW\n" +
+      "M15Fl-C1HciFjyvl2olwGFW4yA-Tu0S0JUmQ9Nw9WQW,\n" +
       "SKU-1003,https://encrypted-tbn2.gstatic.com/shopping?q=tbn:ANd9GcSffEg" +
       "E0tbJ_4PajXTKAIMfqAeC7ceqkey0tMRj_SX5D9QnwEefeHDOcrsINEpAV_rQ5ym9ZlunL" +
-      "u750_hh6A_uXma_8-mJ03Uu_SNNJj4rh1eYf4EwObDt\n"
+      "u750_hh6A_uXma_8-mJ03Uu_SNNJj4rh1eYf4EwObDt,\n"
     );
   }
 

@@ -121,11 +121,13 @@ async def run_upscale_pipeline(
 
   unique_urls: List[str] = []
   seen = set()
-  url_to_primary_rows: Dict[str, List[FeedInputRow]] = {}
+  url_to_sku_rows: Dict[str, List[FeedInputRow]] = {}
   for row in sharded_rows:
-    url_to_primary_rows.setdefault(row.image_link, []).append(row)
     for url in [row.image_link, *row.additional_image_links]:
-      if url and url not in seen:
+      if not url:
+        continue
+      url_to_sku_rows.setdefault(url, []).append(row)
+      if url not in seen:
         seen.add(url)
         unique_urls.append(url)
 
@@ -277,7 +279,7 @@ async def run_upscale_pipeline(
             else:
               live_upscaled += 1
 
-            for sku_row in url_to_primary_rows.get(url, ()):
+            for sku_row in url_to_sku_rows.get(url, ()):
               incremental_log_buffer.append(
                   ConversionLogEntry(
                       timestamp_utc=now_iso,
@@ -315,7 +317,7 @@ async def run_upscale_pipeline(
                 err_reason,
             )
 
-            for sku_row in url_to_primary_rows.get(url, ()):
+            for sku_row in url_to_sku_rows.get(url, ()):
               incremental_log_buffer.append(
                   ConversionLogEntry(
                       timestamp_utc=now_iso,
@@ -360,64 +362,58 @@ async def run_upscale_pipeline(
   daily_log_entries: List[ConversionLogEntry] = []
 
   for row in sharded_rows:
-    primary_metrics = processed_map.get(row.image_link)
-    if not primary_metrics:
-      # Record failed URL in daily log with explicit error_message per SKU
-      err_msg = failed_errors_map.get(
-          row.image_link, "Failed to fetch or convert image"
-      )
-      daily_log_entries.append(
-          ConversionLogEntry(
-              timestamp_utc=now_iso,
-              date_yyyymmdd=date_yyyymmdd,
-              request_id=job_id,
-              sku_id=row.id,
-              source_image_url=row.image_link,
-              converted_gcs_url="",
-              engine_id=engine_id,
-              target_resolution=target_px,
-              original_dimensions="0x0",
-              output_dimensions="0x0",
-              status="FAILED",
-              processing_ms=0.0,
-              error_message=err_msg,
-          )
-      )
-      if row.image_link.startswith("https://"):
-        supplemental_rows.append(
-            SupplementalFeedRow(
-                id=row.id,
-                input_url=row.image_link,
-                image_link=row.image_link,
-                additional_image_link="",
+    scaled_primary_url = ""
+    if row.image_link:
+      primary_metrics = processed_map.get(row.image_link)
+      if primary_metrics:
+        scaled_primary_url = primary_metrics.public_gcs_url
+        daily_log_entries.append(
+            ConversionLogEntry(
+                timestamp_utc=now_iso,
+                date_yyyymmdd=date_yyyymmdd,
+                request_id=job_id,
+                sku_id=row.id,
+                source_image_url=row.image_link,
+                converted_gcs_url=primary_metrics.public_gcs_url,
+                engine_id=primary_metrics.engine_used,
+                target_resolution=target_px,
+                original_dimensions=(
+                    f"{primary_metrics.original_width}x"
+                    f"{primary_metrics.original_height}"
+                ),
+                output_dimensions=(
+                    f"{primary_metrics.output_width}x"
+                    f"{primary_metrics.output_height}"
+                ),
+                status="SKIPPED_COMPLIANT"
+                if primary_metrics.skipped_already_compliant
+                else "CONVERTED",
+                processing_ms=primary_metrics.processing_ms,
             )
         )
-      continue
-
-    daily_log_entries.append(
-        ConversionLogEntry(
-            timestamp_utc=now_iso,
-            date_yyyymmdd=date_yyyymmdd,
-            request_id=job_id,
-            sku_id=row.id,
-            source_image_url=row.image_link,
-            converted_gcs_url=primary_metrics.public_gcs_url,
-            engine_id=primary_metrics.engine_used,
-            target_resolution=target_px,
-            original_dimensions=(
-                f"{primary_metrics.original_width}x"
-                f"{primary_metrics.original_height}"
-            ),
-            output_dimensions=(
-                f"{primary_metrics.output_width}x"
-                f"{primary_metrics.output_height}"
-            ),
-            status="SKIPPED_COMPLIANT"
-            if primary_metrics.skipped_already_compliant
-            else "CONVERTED",
-            processing_ms=primary_metrics.processing_ms,
+      else:
+        err_msg = failed_errors_map.get(
+            row.image_link, "Failed to fetch or convert image"
         )
-    )
+        daily_log_entries.append(
+            ConversionLogEntry(
+                timestamp_utc=now_iso,
+                date_yyyymmdd=date_yyyymmdd,
+                request_id=job_id,
+                sku_id=row.id,
+                source_image_url=row.image_link,
+                converted_gcs_url="",
+                engine_id=engine_id,
+                target_resolution=target_px,
+                original_dimensions="0x0",
+                output_dimensions="0x0",
+                status="FAILED",
+                processing_ms=0.0,
+                error_message=err_msg,
+            )
+        )
+        if row.image_link.startswith("https://"):
+          scaled_primary_url = row.image_link
 
     mapped_additional: List[str] = []
     for add_url in row.additional_image_links:
@@ -447,15 +443,43 @@ async def run_upscale_pipeline(
                 processing_ms=add_metrics.processing_ms,
             )
         )
-
-    supplemental_rows.append(
-        SupplementalFeedRow(
-            id=row.id,
-            input_url=row.image_link,
-            image_link=primary_metrics.public_gcs_url,
-            additional_image_link=",".join(mapped_additional),
+      else:
+        add_err = failed_errors_map.get(
+            add_url, "Failed to fetch or convert additional image"
         )
-    )
+        daily_log_entries.append(
+            ConversionLogEntry(
+                timestamp_utc=now_iso,
+                date_yyyymmdd=date_yyyymmdd,
+                request_id=job_id,
+                sku_id=row.id,
+                source_image_url=add_url,
+                converted_gcs_url="",
+                engine_id=engine_id,
+                target_resolution=target_px,
+                original_dimensions="0x0",
+                output_dimensions="0x0",
+                status="FAILED",
+                processing_ms=0.0,
+                error_message=add_err,
+            )
+        )
+        if add_url.startswith("https://"):
+          mapped_additional.append(add_url)
+
+    if scaled_primary_url or mapped_additional:
+      input_ref = row.image_link or (
+          row.additional_image_links[0] if row.additional_image_links else ""
+      )
+      supplemental_rows.append(
+          SupplementalFeedRow(
+              id=row.id,
+              input_url=input_ref,
+              image_link=scaled_primary_url,
+              additional_image_link=",".join(row.additional_image_links),
+              additional_scaled_image_link=",".join(mapped_additional),
+          )
+      )
 
   daily_log_gcs_uri = gcs_uploader.append_daily_status_log(
       date_yyyymmdd, daily_log_entries
@@ -843,38 +867,49 @@ async def _retry_sku_subset_and_recalculate(
   existing_items = active_db.get_conversion_logs_by_request(
       request_id, force_refresh=True
   )
-  items_by_sku: Dict[str, ConversionLogEntry] = {
-      it.sku_id: it for it in existing_items
+  items_by_pair: Dict[tuple[str, str], ConversionLogEntry] = {
+      (it.sku_id, it.source_image_url): it for it in existing_items
   }
-  source_url_by_sku: Dict[str, str] = {
-      it.sku_id: it.source_image_url
-      for it in existing_items
-      if it.source_image_url
-  }
+  urls_by_sku: Dict[str, List[str]] = {}
   for r in in_rows:
-    if r.id not in source_url_by_sku and r.image_link:
-      source_url_by_sku[r.id] = r.image_link
+    row_urls = ([r.image_link] if r.image_link else []) + list(
+        r.additional_image_links
+    )
+    sku_list = urls_by_sku.setdefault(r.id, [])
+    for u in row_urls:
+      if u and u not in sku_list:
+        sku_list.append(u)
+  for it in existing_items:
+    if it.source_image_url:
+      sku_list = urls_by_sku.setdefault(it.sku_id, [])
+      if it.source_image_url not in sku_list:
+        sku_list.append(it.source_image_url)
 
+  pairs_to_retry: List[tuple[str, str]] = []
   if target_sku_ids is not None:
-    skus_to_retry: List[str] = []
     for raw_sku in target_sku_ids:
       clean_sku = raw_sku.strip()
       if not clean_sku:
         continue
-      if clean_sku not in source_url_by_sku:
+      if clean_sku not in urls_by_sku or not urls_by_sku[clean_sku]:
         raise ValueError(
             f"SKU '{clean_sku}' not found in request '{request_id}'"
         )
-      skus_to_retry.append(clean_sku)
+      for u in urls_by_sku[clean_sku]:
+        if (clean_sku, u) not in pairs_to_retry:
+          pairs_to_retry.append((clean_sku, u))
   else:
-    skus_to_retry = [
-        it.sku_id
-        for it in existing_items
-        if (it.status or "").upper().startswith("FAILED")
-        or (it.status or "").upper() in ("PENDING", "PROCESSING")
-    ]
+    for it in existing_items:
+      status_up = (it.status or "").upper()
+      if status_up.startswith("FAILED") or status_up in (
+          "PENDING",
+          "PROCESSING",
+      ):
+        pair = (it.sku_id, it.source_image_url)
+        if it.source_image_url and pair not in pairs_to_retry:
+          pairs_to_retry.append(pair)
 
-  if not skus_to_retry:
+  if not pairs_to_retry:
     return rec, existing_items
 
   now_iso, date_yyyymmdd = utc_now_iso_and_yyyymmdd()
@@ -883,15 +918,14 @@ async def _retry_sku_subset_and_recalculate(
 
   with (
       futures.ThreadPoolExecutor(
-          max_workers=max(1, min(4, len(skus_to_retry)))
+          max_workers=max(1, min(4, len(pairs_to_retry)))
       ) as cpu_pool,
       futures.ThreadPoolExecutor(
-          max_workers=max(1, min(4, len(skus_to_retry)))
+          max_workers=max(1, min(4, len(pairs_to_retry)))
       ) as gcs_io_pool,
   ):
     async with httpx.AsyncClient(headers=BROWSER_IMAGE_HEADERS) as http_client:
-      for sku_id in skus_to_retry:
-        source_url = source_url_by_sku[sku_id]
+      for sku_id, source_url in pairs_to_retry:
         t0 = time.perf_counter()
         try:
           raw_bytes = await fetch_image_bytes(source_url, http_client)
@@ -959,20 +993,31 @@ async def _retry_sku_subset_and_recalculate(
               error_message=err_reason,
           )
         retried_entries.append(entry)
-        items_by_sku[sku_id] = entry
+        items_by_pair[(sku_id, source_url)] = entry
 
   active_db.record_conversion_logs(retried_entries)
   gcs_uploader.append_daily_status_log(date_yyyymmdd, retried_entries)
 
   # Order merged items consistently with input CSV rows if available
   if in_rows:
-    ordered_skus = [r.id for r in in_rows if r.id in items_by_sku]
-    extra_skus = [k for k in items_by_sku if k not in set(ordered_skus)]
-    merged_items = [items_by_sku[k] for k in [*ordered_skus, *extra_skus]]
+    ordered_pairs: List[tuple[str, str]] = []
+    for r in in_rows:
+      row_urls = ([r.image_link] if r.image_link else []) + list(
+          r.additional_image_links
+      )
+      for u in row_urls:
+        pair = (r.id, u)
+        if pair in items_by_pair and pair not in ordered_pairs:
+          ordered_pairs.append(pair)
+    extra_pairs = [p for p in items_by_pair if p not in set(ordered_pairs)]
+    merged_items = [items_by_pair[p] for p in [*ordered_pairs, *extra_pairs]]
   else:
-    merged_items = sorted(items_by_sku.values(), key=lambda x: x.sku_id)
+    merged_items = sorted(
+        items_by_pair.values(),
+        key=lambda x: (x.sku_id, x.source_image_url),
+    )
 
-  # Refresh in-memory cache with the full merged SKU map and updated_at_utc
+  # Refresh in-memory cache with the full merged map and updated_at_utc
   # version
   active_db.cache_conversion_logs_for_request(
       request_id=request_id,
@@ -1021,25 +1066,55 @@ async def _retry_sku_subset_and_recalculate(
   recalculated_cost = round(recalculated_cost, 6)
 
   supplemental_rows: List[SupplementalFeedRow] = []
-  for it in merged_items:
-    if it.converted_gcs_url:
-      supplemental_rows.append(
-          SupplementalFeedRow(
-              id=it.sku_id,
-              input_url=it.source_image_url,
-              image_link=it.converted_gcs_url,
-              additional_image_link="",
-          )
-      )
-    elif it.source_image_url.startswith("https://"):
-      supplemental_rows.append(
-          SupplementalFeedRow(
-              id=it.sku_id,
-              input_url=it.source_image_url,
-              image_link=it.source_image_url,
-              additional_image_link="",
-          )
-      )
+  if in_rows:
+    for r in in_rows:
+      scaled_primary = ""
+      if r.image_link:
+        prim_entry = items_by_pair.get((r.id, r.image_link))
+        if prim_entry and prim_entry.converted_gcs_url:
+          scaled_primary = prim_entry.converted_gcs_url
+        elif r.image_link.startswith("https://"):
+          scaled_primary = r.image_link
+      mapped_add: List[str] = []
+      for add_url in r.additional_image_links:
+        add_entry = items_by_pair.get((r.id, add_url))
+        if add_entry and add_entry.converted_gcs_url:
+          mapped_add.append(add_entry.converted_gcs_url)
+        elif add_url.startswith("https://"):
+          mapped_add.append(add_url)
+      if scaled_primary or mapped_add:
+        in_ref = r.image_link or (
+            r.additional_image_links[0] if r.additional_image_links else ""
+        )
+        supplemental_rows.append(
+            SupplementalFeedRow(
+                id=r.id,
+                input_url=in_ref,
+                image_link=scaled_primary,
+                additional_image_link=",".join(r.additional_image_links),
+                additional_scaled_image_link=",".join(mapped_add),
+            )
+        )
+  else:
+    for it in merged_items:
+      if it.converted_gcs_url:
+        supplemental_rows.append(
+            SupplementalFeedRow(
+                id=it.sku_id,
+                input_url=it.source_image_url,
+                image_link=it.converted_gcs_url,
+                additional_image_link="",
+            )
+        )
+      elif it.source_image_url.startswith("https://"):
+        supplemental_rows.append(
+            SupplementalFeedRow(
+                id=it.sku_id,
+                input_url=it.source_image_url,
+                image_link=it.source_image_url,
+                additional_image_link="",
+            )
+        )
 
   output_csv = (
       serialize_supplemental_feed(supplemental_rows)

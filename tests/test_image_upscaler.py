@@ -347,13 +347,17 @@ def test_access_code_auth_requests_db_and_downloads() -> None:
   assert detail_resp.status_code == 200
   detail_payload = detail_resp.json()
   assert detail_payload["request"]["request_id"] == req_id
-  assert len(detail_payload["items"]) >= 7
+  assert len(detail_payload["items"]) == 12
 
   # 7. Download Output CSV for the completed request
   dl_resp = client.get(f"/api/requests/{req_id}/download-output")
   assert dl_resp.status_code == 200
   dl_lines = dl_resp.text.strip().splitlines()
-  assert dl_lines[0] == "id,input_url,scaled_image_url"
+  expected_5col_hdr = (
+      "id,input_url,scaled_image_url,"
+      "additional_image_link,additional_scaled_image_link"
+  )
+  assert dl_lines[0] == expected_5col_hdr
   assert len(dl_lines) == 8
 
   # 8. Download daily status/{YYYYMMDD}/log.csv
@@ -383,12 +387,16 @@ def test_cli_audit_and_upscale(tmp_path: pathlib.Path) -> None:
   assert rc_up == 0
   assert out_csv.is_file()
   lines = out_csv.read_text(encoding="utf-8").strip().splitlines()
-  assert lines[0] == "id,input_url,scaled_image_url"
+  expected_5col_hdr = (
+      "id,input_url,scaled_image_url,"
+      "additional_image_link,additional_scaled_image_link"
+  )
+  assert lines[0] == expected_5col_hdr
   assert len(lines) == 8
 
 
 def test_ensure_output_csv_has_input_url_legacy_backfill() -> None:
-  """Verify legacy output CSVs are normalized to 3-column supplemental feed."""
+  """Verify legacy output CSVs are normalized to GMC supplemental feed."""
   input_csv = (
       "id,image_link\nSKU-1,https://example.com/orig1.jpg\nSKU-2,https://"
       "example.com/orig2.jpg\n"
@@ -413,16 +421,28 @@ def test_ensure_output_csv_has_input_url_legacy_backfill() -> None:
   assert lines[2] == expected_row2
 
   # Also verify 4-column legacy CSV
-  # (id,input_url,image_link,additional_image_link) is normalized
+  # (id,input_url,image_link,additional_image_link) backfills original + scaled
+  in_with_add = (
+      "id,image_link,additional_image_link\n"
+      "SKU-1,https://example.com/orig1.jpg,https://example.com/orig_extra.jpg\n"
+  )
   legacy_four_col_csv = (
       "id,input_url,image_link,additional_image_link\n"
       "SKU-1,https://example.com/orig1.jpg,https://storage.googleapis.com/"
       "b/out1.jpg,https://storage.googleapis.com/b/extra.jpg\n"
   )
-  upgraded_four = ensure_output_csv_has_input_url("", legacy_four_col_csv)
+  upgraded_four = ensure_output_csv_has_input_url(
+      in_with_add, legacy_four_col_csv
+  )
   lines_four = upgraded_four.strip().splitlines()
-  assert lines_four[0] == "id,input_url,scaled_image_url"
-  assert lines_four[1] == expected_row1
+  assert lines_four[0] == (
+      "id,input_url,scaled_image_url,"
+      "additional_image_link,additional_scaled_image_link"
+  )
+  assert lines_four[1] == (
+      f"{expected_row1},https://example.com/orig_extra.jpg,"
+      "https://storage.googleapis.com/b/extra.jpg"
+  )
 
 
 def test_vertex_rate_limiter_and_retry_classification() -> None:
@@ -885,3 +905,130 @@ def test_open_source_release_checklist_compliance() -> None:
       assert (
           len(line) <= 80
       ), f"{src_file}:{line_no} exceeds 80 chars ({len(line)} chars)"
+
+
+def test_gmc_additional_image_link_formats_and_bmp_tiff() -> None:
+  """Verify GMC additional_image_link formats, 10-URL cap, and BMP/TIFF."""
+  # 1. BMP & TIFF magic-byte validation per GMC spec
+  bmp_payload = b"BM" + (b"\x00" * 32)
+  tiff_le = b"II*\x00" + (b"\x00" * 32)
+  tiff_be = b"MM\x00*" + (b"\x00" * 32)
+  assert inspect_image_magic_bytes(bmp_payload) == "BMP"
+  assert inspect_image_magic_bytes(tiff_le) == "TIFF"
+  assert inspect_image_magic_bytes(tiff_be) == "TIFF"
+
+  # 2. Quoted URLs containing commas + %2C encoded commas
+  quoted_csv = (
+      "id,image_link,additional_image_link\n"
+      "SKU-QUOTED,https://example.com/main.jpg,"
+      '"https://example.com/img2,3.jpg","https://example.com/img2,4.jpg"\n'
+      "SKU-ENC,https://example.com/main2.jpg,"
+      "https://example.com/img2%2C3.jpg,https://example.com/img2%2C4.jpg\n"
+  )
+  parsed_quoted = parse_delimited_feed(quoted_csv)
+  assert len(parsed_quoted) == 2
+  assert parsed_quoted[0].additional_image_links == [
+      "https://example.com/img2,3.jpg",
+      "https://example.com/img2,4.jpg",
+  ]
+  assert parsed_quoted[1].additional_image_links == [
+      "https://example.com/img2%2C3.jpg",
+      "https://example.com/img2%2C4.jpg",
+  ]
+
+  # 3. Repeated additional_image_link headers + numbered headers + >10 cap
+  repeated_csv = (
+      "id,image_link,additional_image_link,additional_image_link,"
+      "additional_image_link_3\n"
+      "SKU-REP,https://example.com/main.jpg,https://example.com/a1.jpg,"
+      "https://example.com/a2.jpg,https://example.com/a3.jpg\n"
+  )
+  parsed_rep = parse_delimited_feed(repeated_csv)
+  assert parsed_rep[0].additional_image_links == [
+      "https://example.com/a1.jpg",
+      "https://example.com/a2.jpg",
+      "https://example.com/a3.jpg",
+  ]
+
+  twelve_urls = ",".join(
+      f"https://example.com/extra_{i}.jpg" for i in range(1, 13)
+  )
+  cap_csv = (
+      "id,image_link,additional_image_link\n"
+      f"SKU-CAP,https://example.com/main.jpg,{twelve_urls}\n"
+  )
+  parsed_cap = parse_delimited_feed(cap_csv)
+  assert len(parsed_cap[0].additional_image_links) == 10
+
+  # 4. Additional-only supplemental feed (no image_link column)
+  add_only_csv = (
+      "id,additional_image_link\n"
+      "SKU-ADD-ONLY,synthetic://catalog/side?w=300&h=300|"
+      "synthetic://catalog/back?w=300&h=300\n"
+  )
+  parsed_add_only = parse_delimited_feed(add_only_csv)
+  assert len(parsed_add_only) == 1
+  assert not parsed_add_only[0].image_link
+  assert len(parsed_add_only[0].additional_image_links) == 2
+
+  # 5. End-to-end API request + output CSV + retry with additional_image_link
+  client = TestClient(app)
+  s_resp = client.get("/api/session")
+  assert s_resp.status_code == 200
+  csrf_token = s_resp.json()["csrf_token"]
+  login_resp = client.post(
+      "/api/auth/login",
+      headers={"X-CSRF-Token": csrf_token},
+      json={"access_code": DEPLOYMENT_ACCESS_CODE},
+  )
+  assert login_resp.status_code == 200
+
+  e2e_csv = (
+      "id,image_link,additional_image_link\n"
+      "SKU-MULTI,synthetic://retail-jp/SKU-MULTI/300x300/main.jpg,"
+      '"synthetic://retail-jp/SKU-MULTI/320x240/side.jpg,'
+      'synthetic://retail-jp/SKU-MULTI/1600x1600/back.jpg"\n'
+  )
+  create_resp = client.post(
+      "/api/requests",
+      headers={"X-CSRF-Token": csrf_token},
+      json={
+          "filename": "multi_images.csv",
+          "csv_content": e2e_csv,
+          "engine_id": "local-lanczos-canvas",
+          "target_resolution": 1500,
+      },
+  )
+  assert create_resp.status_code == 200
+  req_data = create_resp.json()
+  assert req_data["total_skus"] == 1
+  assert req_data["total_images"] == 3
+  assert req_data["upscaled_images"] == 2
+  assert req_data["skipped_images"] == 1
+  req_id = req_data["request_id"]
+
+  detail_resp = client.get(f"/api/requests/{req_id}")
+  assert detail_resp.status_code == 200
+  items = detail_resp.json()["items"]
+  assert len(items) == 3
+
+  dl_resp = client.get(f"/api/requests/{req_id}/download-output")
+  assert dl_resp.status_code == 200
+  dl_lines = dl_resp.text.strip().splitlines()
+  assert dl_lines[0] == (
+      "id,input_url,scaled_image_url,"
+      "additional_image_link,additional_scaled_image_link"
+  )
+  assert len(dl_lines) == 2
+  assert "synthetic://retail-jp/SKU-MULTI/320x240/side.jpg" in dl_lines[1]
+  assert dl_lines[1].count("https://storage.googleapis.com/") == 3
+
+  retry_resp = client.post(
+      f"/api/requests/{req_id}/skus/SKU-MULTI/retry",
+      headers={"X-CSRF-Token": csrf_token},
+      json={"engine_id": "realesrgan"},
+  )
+  assert retry_resp.status_code == 200
+  retried_items = retry_resp.json()["items"]
+  assert len(retried_items) == 3
+  assert all(it["engine_id"] == "realesrgan" for it in retried_items)
