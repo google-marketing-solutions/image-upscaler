@@ -37,6 +37,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY requirements.txt .
 RUN pip3 install --no-cache-dir \
+    --require-hashes \
     --index-url https://pypi.org/simple \
     -r requirements.txt
 

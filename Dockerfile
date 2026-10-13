@@ -29,6 +29,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir \
+    --require-hashes \
     --index-url https://pypi.org/simple \
     --prefix=/install -r requirements.txt
 

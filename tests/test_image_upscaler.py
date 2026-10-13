@@ -873,6 +873,11 @@ def test_open_source_release_checklist_compliance() -> None:
 
   req_text = (root / "requirements.txt").read_text(encoding="utf-8")
   assert "https://pypi.org/simple" in req_text
+  assert "--hash=sha256:" in req_text
+  assert "--require-hashes" in (root / "Dockerfile").read_text(encoding="utf-8")
+  assert "--require-hashes" in (root / "Dockerfile.gpu").read_text(
+      encoding="utf-8"
+  )
 
   source_files = [
       *root.glob("app/**/*.py"),

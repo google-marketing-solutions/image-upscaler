@@ -494,7 +494,8 @@ terraform apply
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip install --index-url https://pypi.org/simple -r requirements.txt
+pip install --require-hashes --index-url https://pypi.org/simple \
+  -r requirements.txt
 
 USE_MOCK_DB=true USE_MOCK_GCS=true ACCESS_CODE=123456 \
   uvicorn app.main:app --reload --host 127.0.0.1 --port 8080
