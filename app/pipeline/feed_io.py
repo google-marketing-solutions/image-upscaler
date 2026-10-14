@@ -451,6 +451,40 @@ def ensure_output_csv_has_input_url(input_csv: str, output_csv: str) -> str:
     return output_csv
 
 
+def serialize_gmc_supplemental_only_csv(input_csv: str, output_csv: str) -> str:
+  """Convert output CSV into strict GMC Supplemental Feed format.
+
+  Emits `id,image_link,additional_image_link` where `image_link` and
+  `additional_image_link` contain only the updated/upscaled URLs.
+
+  Args:
+    input_csv: Original input CSV text.
+    output_csv: Existing output CSV text.
+
+  Returns:
+    Formatted 3-column GMC Supplemental Feed CSV string.
+  """
+  normalized = ensure_output_csv_has_input_url(input_csv, output_csv)
+  if not normalized or not normalized.strip():
+    return "id,image_link,additional_image_link\n"
+  reader = list(csv.DictReader(io.StringIO(normalized.strip())))
+  buf = io.StringIO()
+  writer = csv.writer(buf, delimiter=",", lineterminator="\n")
+  writer.writerow(["id", "image_link", "additional_image_link"])
+  for out_row in reader:
+    sku_id = (out_row.get("id") or "").strip()
+    scaled_url = (out_row.get("scaled_image_url") or "").strip() or (
+        out_row.get("image_link") or ""
+    ).strip()
+    scaled_add = (
+        out_row.get("additional_scaled_image_link")
+        or out_row.get("additional_image_link")
+        or ""
+    ).strip()
+    writer.writerow([sku_id, scaled_url, scaled_add])
+  return buf.getvalue()
+
+
 def serialize_daily_status_log(
     entries: Sequence[ConversionLogEntry],
     include_header: bool = True,

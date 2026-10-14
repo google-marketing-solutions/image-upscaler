@@ -1028,6 +1028,14 @@ def test_gmc_additional_image_link_formats_and_bmp_tiff() -> None:
   assert "synthetic://retail-jp/SKU-MULTI/320x240/side.jpg" in dl_lines[1]
   assert dl_lines[1].count("https://storage.googleapis.com/") == 3
 
+  supp_resp = client.get(f"/api/requests/{req_id}/download-supplemental")
+  assert supp_resp.status_code == 200
+  supp_lines = supp_resp.text.strip().splitlines()
+  assert supp_lines[0] == "id,image_link,additional_image_link"
+  assert len(supp_lines) == 2
+  assert "synthetic://" not in supp_lines[1]
+  assert supp_lines[1].count("https://storage.googleapis.com/") == 3
+
   retry_resp = client.post(
       f"/api/requests/{req_id}/skus/SKU-MULTI/retry",
       headers={"X-CSRF-Token": csrf_token},

@@ -36,6 +36,7 @@ from app.pipeline.auditor import audit_catalog_feed
 from app.pipeline.auditor import fetch_image_bytes
 from app.pipeline.feed_io import ensure_output_csv_has_input_url
 from app.pipeline.feed_io import parse_delimited_feed
+from app.pipeline.feed_io import serialize_gmc_supplemental_only_csv
 from app.pipeline.feed_io import serialize_supplemental_feed
 from app.pipeline.gcs_uploader import PublicGcsUploader
 from app.pipeline.orchestrator import create_and_process_request
@@ -779,6 +780,40 @@ async def api_download_request_output_csv(request_id: str) -> Response:
       media_type="text/csv; charset=utf-8",
       headers={
           "Content-Disposition": f'attachment; filename="out-{safe_id}.csv"',
+          "X-Content-Type-Options": "nosniff",
+      },
+  )
+
+
+@app.get(
+    "/api/requests/{request_id}/download-supplemental",
+    dependencies=[Depends(require_access_code_auth)],
+)
+async def api_download_request_supplemental_csv(request_id: str) -> Response:
+  """Download strict GMC Supplemental Format Output CSV for a request."""
+  safe_id = "".join(c for c in request_id if c.isalnum() or c in ("-", "_"))
+  rec = await asyncio.to_thread(request_db.get_request, request_id)
+  if not rec:
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND, detail="Request ID not found"
+    )
+  in_csv, output_csv = await asyncio.to_thread(
+      request_db.get_request_csvs, request_id
+  )
+  if not output_csv:
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail="Output CSV is not ready yet",
+    )
+  supp_csv = serialize_gmc_supplemental_only_csv(in_csv, output_csv)
+
+  return Response(
+      content=supp_csv,
+      media_type="text/csv; charset=utf-8",
+      headers={
+          "Content-Disposition": (
+              f'attachment; filename="supplemental-{safe_id}.csv"'
+          ),
           "X-Content-Type-Options": "nosniff",
       },
   )

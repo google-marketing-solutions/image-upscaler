@@ -117,18 +117,19 @@ SKU-1001,https://cdn.example.com/1001_main.jpg,"https://cdn.example.com/1001_sid
 SKU-1002,https://cdn.example.com/1002_main.jpg,
 ```
 
-### 4.2 Output CSV
-Downloaded via `GET /api/requests/<request_id>/download-output`:
-- **Primary images only (3 columns)**:
-  `id,input_url,scaled_image_url`
-- **With additional images (5 columns)**:
-  `id,input_url,scaled_image_url,additional_image_link,additional_scaled_image_link`
-  where `additional_image_link` preserves the original comma-separated URLs and
-  `additional_scaled_image_link` contains the upscaled public GCS URLs.
+### 4.2 Output CSVs
+On the request detail page (`/request/<request_id>`), two output formats are
+available:
+- **Download Comparison CSV** (`GET /api/requests/<request_id>/download-output`):
+  Includes reference comparison columns (`id,input_url,scaled_image_url` or
+  `id,input_url,scaled_image_url,additional_image_link,additional_scaled_image_link`).
+- **Download Supplemental CSV** (`GET /api/requests/<request_id>/download-supplemental`):
+  Emits the strict GMC Supplemental Feed header `id,image_link,additional_image_link`
+  containing only the SKU ID and the updated/upscaled GCS URLs.
 
 ```csv
-id,input_url,scaled_image_url,additional_image_link,additional_scaled_image_link
-SKU-1001,https://cdn.example.com/1001_main.jpg,https://storage.googleapis.com/bucket/img/lc1500/9e65db757f.jpg,"https://cdn.example.com/1001_side.jpg,https://cdn.example.com/1001_back.jpg","https://storage.googleapis.com/bucket/img/lc1500/9079d4100a.jpg,https://storage.googleapis.com/bucket/img/lc1500/ff3da343a3.jpg"
+id,image_link,additional_image_link
+SKU-1001,https://storage.googleapis.com/bucket/img/lc1500/9e65db757f.jpg,"https://storage.googleapis.com/bucket/img/lc1500/9079d4100a.jpg,https://storage.googleapis.com/bucket/img/lc1500/ff3da343a3.jpg"
 ```
 
 ### 4.3 GCS Object Paths

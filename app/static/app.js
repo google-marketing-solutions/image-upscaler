@@ -185,7 +185,8 @@
       rev_cost: "推定コスト",
       btn_submit_job: "リクエストを送信",
       btn_dl_input: "入力CSVをダウンロード",
-      btn_dl_output: "出力CSVをダウンロード",
+      btn_dl_output: "比較CSVをダウンロード",
+      btn_dl_supplemental: "サプリメンタルCSVをダウンロード",
       detail_items_heading: "このリクエストの画像変換結果",
       th_dimensions: "サイズ (元 → 変換後)",
       th_source_url: "元画像URL",
@@ -330,7 +331,8 @@
       rev_cost: "Estimated Cost",
       btn_submit_job: "Submit Upscaling Request",
       btn_dl_input: "Download Input CSV",
-      btn_dl_output: "Download Output CSV",
+      btn_dl_output: "Download Comparison CSV",
+      btn_dl_supplemental: "Download Supplemental CSV",
       detail_items_heading: "Converted Images in this Request",
       th_dimensions: "Dimensions",
       th_source_url: "Source URL",
@@ -460,7 +462,8 @@
       rev_cost: "预估费用",
       btn_submit_job: "提交超分任务",
       btn_dl_input: "下载输入 CSV",
-      btn_dl_output: "下载输出 CSV",
+      btn_dl_output: "下载对比 CSV",
+      btn_dl_supplemental: "下载补充数据源 CSV",
       detail_items_heading: "该任务的图片转换明细",
       th_dimensions: "尺寸 (原图 → 输出)",
       th_source_url: "原图链接",
@@ -597,7 +600,8 @@
       rev_cost: "예상 비용",
       btn_submit_job: "업스케일링 요청 제출",
       btn_dl_input: "입력 CSV 다운로드",
-      btn_dl_output: "출력 CSV 다운로드",
+      btn_dl_output: "비교 CSV 다운로드",
+      btn_dl_supplemental: "보조 피드 CSV 다운로드",
       detail_items_heading: "이 요청의 변환된 이미지 목록",
       th_dimensions: "크기 (원본 → 변환 후)",
       th_source_url: "원본 이미지 URL",
@@ -1163,7 +1167,7 @@
           "kpi-total-spend"],
         true
       );
-      renderTableLoader(requestsTableTbody, 9, t("loading_requests"), 4);
+      renderTableLoader(requestsTableTbody, 8, t("loading_requests"), 4);
       fetchRequestsList(false);
     }
   }
@@ -1561,7 +1565,7 @@
     if (!cachedRequests.length) {
       const tr = document.createElement("tr");
       const td = createCell("No requests yet.");
-      td.setAttribute("colspan", "9");
+      td.setAttribute("colspan", "8");
       tr.appendChild(td);
       requestsTableTbody.replaceChildren(tr);
       renderPaginationControls(reqInfoEl, reqBtnsEl, 0, 1, requestsPageSize,
@@ -1626,7 +1630,6 @@
             (rec.failed_images > 0 ? " (" + rec.failed_images + " failed)"
               : "");
       tr.appendChild(createCell(countsText));
-      tr.appendChild(createCell(formatUsd(rec.estimated_cost_usd)));
       tr.appendChild(createCell(rec.created_at_utc.replace("T",
         " ").replace("Z", "")));
 
@@ -1645,23 +1648,6 @@
         navigateTo("/request/" + encodeURIComponent(rec.request_id));
       });
       btnWrap.appendChild(openBtn);
-
-      if (rec.status === "COMPLETED" || rec.output_gcs_uri) {
-        const dlBtn = document.createElement("button");
-        dlBtn.type = "button";
-        dlBtn.className = "btn btn-google-outlined";
-        dlBtn.textContent = t("btn_dl_csv_short");
-        dlBtn.addEventListener("click", function (ev) {
-          ev.stopPropagation();
-          downloadWithAuth(
-            "/api/requests/" + encodeURIComponent(rec.request_id) +
-              "/download-output",
-            "out-" + rec.request_id + ".csv",
-            dlBtn
-          );
-        });
-        btnWrap.appendChild(dlBtn);
-      }
 
       actionTd.appendChild(btnWrap);
       tr.appendChild(actionTd);
@@ -1700,7 +1686,7 @@
       setLoading(true);
       setButtonLoading(refreshBtn, true, t("loading_refreshing"));
       if (!hasLoadedRequestsOnce) {
-        renderTableLoader(requestsTableTbody, 9, t("loading_requests"), 4);
+        renderTableLoader(requestsTableTbody, 8, t("loading_requests"), 4);
       }
     }
     try {
@@ -3035,17 +3021,20 @@
       );
     }
   });
-  const btnDetailIn = document.getElementById("btn-detail-download-input");
-  btnDetailIn.addEventListener("click", function () {
-    if (currentDetailRequestId) {
-      downloadWithAuth(
-        "/api/requests/" + encodeURIComponent(currentDetailRequestId) +
-          "/download-input",
-        "in-" + currentDetailRequestId + ".csv",
-        btnDetailIn
-      );
-    }
-  });
+  const btnDetailSupp =
+    document.getElementById("btn-detail-download-supplemental");
+  if (btnDetailSupp) {
+    btnDetailSupp.addEventListener("click", function () {
+      if (currentDetailRequestId) {
+        downloadWithAuth(
+          "/api/requests/" + encodeURIComponent(currentDetailRequestId) +
+            "/download-supplemental",
+          "supplemental-" + currentDetailRequestId + ".csv",
+          btnDetailSupp
+        );
+      }
+    });
+  }
 
   // Individual SKU Modal & Retry listeners
   const btnCloseModal = document.getElementById("btn-close-sku-modal");
