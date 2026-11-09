@@ -293,9 +293,58 @@ def test_access_code_auth_requests_db_and_downloads() -> None:
   csrf_token = session_resp.json()["csrf_token"]
   today_yyyymmdd = session_resp.json()["today_yyyymmdd"]
 
-  # 2. Unauthenticated access to /api/requests is blocked with 401
-  unauth_list = client.get("/api/requests")
-  assert unauth_list.status_code == 401
+  # 2. Unauthenticated access to /api/* endpoints (even with valid CSRF token)
+  # is blocked with 401
+  for get_ep in (
+      "/api/requests",
+      "/api/pricing",
+      "/api/preview-source?url=synthetic://catalog/test.jpg",
+      "/api/preview/lc500/local-lanczos-canvas/test.jpg",
+  ):
+    assert client.get(get_ep).status_code == 401
+
+  for post_ep, payload in (
+      ("/api/audit", {"csv_content": SAMPLE_ANCHOR_FEED_CSV}),
+      (
+          "/api/upscale",
+          {
+              "csv_content": SAMPLE_ANCHOR_FEED_CSV,
+              "target_resolution": 500,
+              "engine_id": "local-lanczos-canvas",
+          },
+      ),
+      (
+          "/api/export-feed",
+          {
+              "rows": [{
+                  "id": "SKU-1",
+                  "input_url": "https://example.com/a.jpg",
+                  "scaled_image_url": "https://example.com/b.jpg",
+              }],
+              "format": "csv",
+          },
+      ),
+  ):
+    resp = client.post(
+        post_ep,
+        headers={"X-CSRF-Token": csrf_token},
+        json=payload,
+    )
+    assert resp.status_code == 401
+
+  unauth_batch = client.post(
+      "/api/vertex-batch-jsonl",
+      headers={"X-CSRF-Token": csrf_token},
+      data={"csv_content": SAMPLE_ANCHOR_FEED_CSV},
+  )
+  assert unauth_batch.status_code == 401
+
+  unauth_file = client.post(
+      "/api/audit-file",
+      headers={"X-CSRF-Token": csrf_token},
+      files={"file": ("feed.csv", SAMPLE_ANCHOR_FEED_CSV.encode("utf-8"))},
+  )
+  assert unauth_file.status_code == 401
 
   # 3. Wrong Access Code login is rejected with 401
   bad_login = client.post(
@@ -636,7 +685,24 @@ def test_sku_preview_proxy_and_slider_comparator() -> None:
   """Verify /api/preview-source proxy, CSP headers, and slider comparator UI."""
   client = TestClient(app)
 
-  # 1. Synthetic URL preview returns valid JPEG bytes
+  # 0. Unauthenticated request to /api/preview-source is rejected with 401
+  unauth_syn = client.get(
+      "/api/preview-source",
+      params={"url": "synthetic://catalog/sku-comp?w=240&h=180"},
+  )
+  assert unauth_syn.status_code == 401
+
+  s_resp = client.get("/api/session")
+  assert s_resp.status_code == 200
+  csrf_token = s_resp.json()["csrf_token"]
+  login_resp = client.post(
+      "/api/auth/login",
+      headers={"X-CSRF-Token": csrf_token},
+      json={"access_code": DEPLOYMENT_ACCESS_CODE},
+  )
+  assert login_resp.status_code == 200
+
+  # 1. Synthetic URL preview returns valid JPEG bytes when authenticated
   syn_resp = client.get(
       "/api/preview-source",
       params={"url": "synthetic://catalog/sku-comp?w=240&h=180"},

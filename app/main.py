@@ -470,7 +470,13 @@ async def api_login_with_access_code(
     return {"authenticated": True}
 
 
-@app.post("/api/auth/logout", dependencies=[Depends(require_csrf_protection)])
+@app.post(
+    "/api/auth/logout",
+    dependencies=[
+        Depends(require_csrf_protection),
+        Depends(require_access_code_auth),
+    ],
+)
 async def api_logout(request: Request, response: Response) -> Dict[str, Any]:
   """Invalidate session and authentication cookies on logout."""
   response.delete_cookie(_get_auth_cookie_name(request), path="/")
@@ -872,7 +878,10 @@ async def api_download_daily_status_log(date_yyyymmdd: str) -> Response:
 @app.post(
     "/api/audit",
     response_model=CatalogAuditReport,
-    dependencies=[Depends(require_csrf_protection)],
+    dependencies=[
+        Depends(require_csrf_protection),
+        Depends(require_access_code_auth),
+    ],
 )
 async def api_audit_catalog(
     payload: FeedTextAuditRequest,
@@ -901,7 +910,10 @@ async def api_audit_catalog(
 @app.post(
     "/api/audit-file",
     response_model=CatalogAuditReport,
-    dependencies=[Depends(require_csrf_protection)],
+    dependencies=[
+        Depends(require_csrf_protection),
+        Depends(require_access_code_auth),
+    ],
 )
 async def api_audit_uploaded_file(
     file: UploadFile = File(...),
@@ -927,7 +939,10 @@ async def api_audit_uploaded_file(
 @app.post(
     "/api/upscale",
     response_model=UpscalePipelineReport,
-    dependencies=[Depends(require_csrf_protection)],
+    dependencies=[
+        Depends(require_csrf_protection),
+        Depends(require_access_code_auth),
+    ],
 )
 async def api_run_upscale(
     payload: FeedTextUpscaleRequest,
@@ -992,7 +1007,13 @@ async def api_run_upscale(
     ) from exc
 
 
-@app.post("/api/export-feed", dependencies=[Depends(require_csrf_protection)])
+@app.post(
+    "/api/export-feed",
+    dependencies=[
+        Depends(require_csrf_protection),
+        Depends(require_access_code_auth),
+    ],
+)
 async def api_export_supplemental_feed(
     payload: SupplementalExportRequest,
 ) -> Response:
@@ -1021,7 +1042,11 @@ async def api_export_supplemental_feed(
 
 
 @app.post(
-    "/api/vertex-batch-jsonl", dependencies=[Depends(require_csrf_protection)]
+    "/api/vertex-batch-jsonl",
+    dependencies=[
+        Depends(require_csrf_protection),
+        Depends(require_access_code_auth),
+    ],
 )
 async def api_export_vertex_batch_jsonl(
     csv_content: str = Form(...),
@@ -1060,7 +1085,10 @@ async def api_export_vertex_batch_jsonl(
     ) from exc
 
 
-@app.get("/api/preview-source")
+@app.get(
+    "/api/preview-source",
+    dependencies=[Depends(require_access_code_auth)],
+)
 async def api_preview_synthetic_source(url: str) -> Response:
   """Render a source or converted product image for Web UI comparison.
 
@@ -1175,7 +1203,10 @@ async def api_preview_synthetic_source(url: str) -> Response:
     ) from exc
 
 
-@app.get("/api/preview/{resolution_dir}/{engine_id}/{filename}")
+@app.get(
+    "/api/preview/{resolution_dir}/{engine_id}/{filename}",
+    dependencies=[Depends(require_access_code_auth)],
+)
 async def api_serve_upscaled_preview(
     resolution_dir: str, engine_id: str, filename: str
 ) -> FileResponse:
